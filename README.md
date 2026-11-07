@@ -86,6 +86,10 @@ Installation and data preparation are those of MRA (below). Then:
 
 The RaCA configs inherit every MRA-T setting (data, AdamW 2e-4, cosine schedule, gradient clipping at 35) and override only the head.
 
+### Running on Kaggle (one T4, SemanticKITTI subset)
+
+The folder [`kaggle/`](kaggle/README.md) holds everything used for the small-scale runs: an idempotent environment installer, the data expansion script for the compact subset, the shared warm-start builder, Kaggle configs for every RaCA configuration and for original MRA, train / eval / compare / smoke-test scripts, and a notebook (`kaggle/kaggle_raca.ipynb`) that runs one configuration end to end. The datasets to attach and the commands are listed in `kaggle/README.md`.
+
 ## 3. Preliminary result (controlled small-scale run)
 
 Both models were trained under identical conditions on Kaggle: SemanticKITTI subset of **400 training / 150 validation frames**, **6 epochs**, batch 1, learning rate 5e-5, one T4 GPU, seed 0, the **same starting weights** (SGN-T weights with SGN's main branch copied into MRA's coarse branch; the CDA output layers and the fusion conv start random in both runs). "Before" is `MRAHead`; "after" is `RaCAHead` with C2 + C3 + C4 and default weights (`RaCA-T-C2C3C4.py`); C1 was not part of this run. Evaluation uses MRA's `SSCMetrics`, plus four disjoint 12.8 m forward-range bands and a pooled vulnerable-road-user (VRU) IoU over the five rare classes.
