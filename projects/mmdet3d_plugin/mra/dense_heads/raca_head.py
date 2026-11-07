@@ -5,7 +5,7 @@
 # ---------------------------------------------
 #  Modified by Zhiwen Yang
 # ---------------------------------------------
-#  Modified by Farquleet Farhat Gondal and Daniyal Imran (RaCA: C2 / C3 / C4)
+#  Modified by Farquleet Farhat Gondal and Daniyal Imran (RaCA: C1 / C2 / C3 / C4)
 # ---------------------------------------------
 
 import os
@@ -25,7 +25,8 @@ from projects.mmdet3d_plugin.mra.utils.ssc_loss import sem_scal_loss, geo_scal_l
 from projects.mmdet3d_plugin.mra.utils.cda_header import CriticalDisttributionAlignmentHead, voxel_sample
 from projects.mmdet3d_plugin.mra.utils.ssc_metric_torch import SSCMetrics
 from projects.mmdet3d_plugin.mra.utils.raca_utils import (stratified_critical_voxels, coarse_labels_rare_preserving,
-                                                          pool_proposal, directed_alignment)
+                                                          pool_proposal, directed_alignment,
+                                                          DepthScanBlock, scan_loss_depth)
 
 class SharedCDAHead(CriticalDisttributionAlignmentHead):
     """MRA's critical-distribution-alignment head, but able to read a given set of locations (C2: shared by both grids).
@@ -48,11 +49,12 @@ class SharedCDAHead(CriticalDisttributionAlignmentHead):
 
 @HEADS.register_module()
 class RaCAHead(nn.Module):
-    """RaCA head = MRA head + C2 (stratified shared critical voxels), C3 (co-located directed alignment),
-    C4 (rare-preserving coarse supervision).
+    """RaCA head = MRA head + C1 (depth-axis scan, after ScanSSC), C2 (stratified shared critical voxels),
+    C3 (co-located directed alignment), C4 (rare-preserving coarse supervision).
 
-    With use_c2 = use_c3 = use_c4 = False and w_mining = w_mining_down1 = 1.0 it is numerically MRAHead.
-    All parameters are those of MRAHead, so MRA / SGN checkpoints load unchanged."""
+    With use_c1 = use_c2 = use_c3 = use_c4 = False and w_mining = w_mining_down1 = 1.0 it is numerically MRAHead.
+    C2-C4 add no parameters, so MRA / SGN checkpoints load unchanged; C1 adds one Scan block per scanned grid
+    (new parameters, zero-initialised to the identity by default so a warm start still begins as MRA)."""
     def __init__(
         self,
         *args,
@@ -67,9 +69,18 @@ class RaCAHead(nn.Module):
         geo_scal_loss=True,
         sem_scal_loss=True,
         save_flag = False,
+        use_c1=False,
         use_c2=True,
         use_c3=True,
         use_c4=True,
+        c1_fine=True,
+        c1_coarse=True,
+        c1_heads=4,
+        c1_margin=0.5,
+        c1_pos_embed=False,
+        c1_zero_init=True,
+        c1_loss_coarse=True,
+        lambda_scan=1.0,
         c2_shares=(0.25, 0.25, 0.40, 0.10),
         c2_rare_share=0.5,
         c2_far_x=128,
@@ -80,7 +91,8 @@ class RaCAHead(nn.Module):
     ):
         super().__init__()
         assert not (use_c3 and not use_c2), 'C3 needs the shared locations of C2'
-        self.use_c2, self.use_c3, self.use_c4 = use_c2, use_c3, use_c4
+        self.use_c1, self.use_c2, self.use_c3, self.use_c4 = use_c1, use_c2, use_c3, use_c4
+        self.c1_fine, self.c1_coarse, self.c1_loss_coarse, self.lambda_scan = c1_fine, c1_coarse, c1_loss_coarse, lambda_scan
         self.c2_shares, self.c2_rare_share, self.c2_far_x = tuple(c2_shares), c2_rare_share, c2_far_x
         self.lambda_align = lambda_align
         self.w_mining, self.w_mining_down1 = w_mining, w_mining_down1      # weights of the two mining (CE) losses
@@ -147,6 +159,11 @@ class RaCAHead(nn.Module):
         self.cda_header_down1 = SharedCDAHead(in_channel=self.embed_dims//2+self.n_classes, num_classes=self.n_classes)
 
         self.interpolate_conv = nn.Conv3d(self.embed_dims, self.embed_dims//2, kernel_size=3, padding=1)
+
+        if self.use_c1:                                                                              # C1
+            scan_kw = dict(heads=c1_heads, margin=c1_margin, pos_embed=c1_pos_embed, zero_init=c1_zero_init)
+            self.scan = DepthScanBlock(self.embed_dims//2, self.bev_h, **scan_kw) if c1_fine else None
+            self.scan_down1 = DepthScanBlock(self.embed_dims//2, self.bev_h//2, **scan_kw) if c1_coarse else None
 
         self.CE_ssc_loss = CE_ssc_loss
         self.sem_scal_loss = sem_scal_loss
@@ -242,6 +259,12 @@ class RaCAHead(nn.Module):
         vox_feats_diff = self.sdb(vox_feats_diff) # 1, C,H,W,Z
         vox_feats_diff_down1 = self.sdb_down1(vox_feats_diff_down1)
 
+        if self.use_c1:                       # C1: depth-axis scan after propagation, before the fusion of the grids
+            if self.scan is not None:
+                vox_feats_diff = self.scan(vox_feats_diff)
+            if self.scan_down1 is not None:
+                vox_feats_diff_down1 = self.scan_down1(vox_feats_diff_down1)
+
         # SSC Head with Critical Distribution Alignment
 
         target_down1 = target[:, ::2, ::2, ::2]
@@ -316,6 +339,11 @@ class RaCAHead(nn.Module):
 
                 loss_geo_scal_down1 = geo_scal_loss(ssc_pred_down1, target_down1)
                 loss_dict['loss_geo_scal_down1'] = loss_geo_scal_down1
+
+            if self.use_c1 and self.lambda_scan > 0:                                                 # C1 scan loss
+                loss_dict['loss_scan'] = scan_loss_depth(ssc_pred, target) * self.lambda_scan
+                if self.c1_coarse and self.c1_loss_coarse:
+                    loss_dict['loss_scan_down1'] = scan_loss_depth(ssc_pred_down1, target_down1) * self.lambda_scan
             
             refined_pred = out_dict["refined_pred"]
             sampled_voxel_coords = out_dict["sampled_voxel_coords"]

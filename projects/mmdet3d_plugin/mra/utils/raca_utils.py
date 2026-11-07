@@ -1,5 +1,7 @@
 """RaCA: Range- and Class-Aware Critical Voxel Alignment -- pure-torch helpers for components C2, C3 and C4.
 
+C1  DepthScanBlock                 depth-axis Scan block (masked self-attention, near-to-far cascade mask, margin)
+    scan_loss_depth               depth-axis Scan loss (back-to-front cumulative mean of logits and labels)
 C2  stratified_critical_voxels    one shared set of critical voxel locations for both resolution grids
 C3  directed_alignment            co-located, directed (stop-gradient) KL between the two grids
 C4  coarse_labels_rare_preserving rare-class-preserving 2x2x2 pooling of the coarse supervision
@@ -11,6 +13,7 @@ Written for torch 1.9 (MRA's environment): no torch.isin, no scalar arguments to
 Class ids follow SemanticKITTI SSC: 0 empty, 1..19 classes, 255 unknown. Grids are (X forward, Y lateral, Z height).
 """
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 RARE = (2, 3, 6, 7, 8)                                 # bicycle, motorcycle, person, bicyclist, motorcyclist
@@ -113,3 +116,78 @@ def directed_alignment(logits_fine, logits_coarse, stratum):
     kl_fine_leads = (lf.detach().exp() * (lf.detach() - lc)).sum(1)    # coarse follows fine
     kl_coarse_leads = (lc.detach().exp() * (lc.detach() - lf)).sum(1)  # fine follows coarse
     return torch.where(fine_leads, kl_fine_leads, kl_coarse_leads).mean(), fine_leads.float().mean()
+
+
+# ----------------------------------------------------------------------------------------------------------------
+# C1: depth-axis scan, after ScanSSC (Bae, Ha and Kim, CVPR 2025, arXiv 2411.16129), restricted to the depth axis.
+# Module = ScanSSC's Scan block (Algorithm G.1 of the paper) applied along the forward (X) axis only:
+#   pre-norm masked self-attention + 2-layer FFN, residual connections, cascading mask so that a voxel attends to
+#   itself and to the voxels nearer to the camera, with the nearest `margin` share of every line unmasked for all.
+# Loss = ScanSSC's Scan loss (Algorithm G.2) for the depth axis: cumulative mean of logits and of one-hot labels
+#   from the far end of each line to the near end, cross-entropy between them.
+# Differences from ScanSSC, on purpose: only the depth axis (no width/height blocks, no spatial mixing network and
+#   no tri-axis softmax fusion); unknown voxels (255) are excluded from the label average; the last projection of
+#   the attention and of the FFN can be zero-initialised so a warm-started model starts exactly as MRA.
+# ----------------------------------------------------------------------------------------------------------------
+
+def depth_cascade_mask(length, margin=0.5, device=None):
+    """(L, L) bool mask for nn.MultiheadAttention (True = may NOT attend). Query i may attend keys j <= i
+    (near-to-far cascade) and every key in the nearest `margin` share of the line (ScanSSC: `[:, :X//2] = False`)."""
+    mask = torch.triu(torch.ones(length, length, dtype=torch.bool, device=device), diagonal=1)
+    mask[:, :int(round(length * margin))] = False
+    return mask
+
+
+class DepthScanBlock(nn.Module):
+    """One ScanSSC Scan block along the depth axis of a (B, C, X, Y, Z) volume; every (y, z) line is a sequence."""
+
+    def __init__(self, dim, seq_len, heads=4, margin=0.5, pos_embed=False, zero_init=True):
+        super().__init__()
+        self.margin = margin
+        self.norm1 = nn.LayerNorm(dim)
+        self.attn = nn.MultiheadAttention(dim, heads, batch_first=True)
+        self.norm2 = nn.LayerNorm(dim)
+        self.ff1 = nn.Linear(dim, dim * 2)
+        self.act = nn.ReLU()
+        self.ff2 = nn.Linear(dim * 2, dim)
+        self.pos = nn.Parameter(torch.zeros(1, seq_len, dim)) if pos_embed else None
+        if zero_init:                                  # block is the identity at initialisation
+            nn.init.zeros_(self.attn.out_proj.weight); nn.init.zeros_(self.attn.out_proj.bias)
+            nn.init.zeros_(self.ff2.weight); nn.init.zeros_(self.ff2.bias)
+        self._mask = {}
+
+    def mask(self, length, device):
+        key = (length, str(device))
+        if key not in self._mask:
+            self._mask[key] = depth_cascade_mask(length, self.margin, device)
+        return self._mask[key]
+
+    def forward(self, x):
+        B, C, X, Y, Z = x.shape
+        seq = x.permute(0, 3, 4, 2, 1).reshape(B * Y * Z, X, C)      # one sequence per (y, z) line, near -> far
+        if self.pos is not None:
+            seq = seq + self.pos[:, :X]
+        h = self.norm1(seq)
+        seq = seq + self.attn(h, h, h, attn_mask=self.mask(X, x.device), need_weights=False)[0]
+        seq = seq + self.ff2(self.act(self.ff1(self.norm2(seq))))
+        return seq.reshape(B, Y, Z, X, C).permute(0, 4, 3, 1, 2).contiguous()
+
+
+def scan_loss_depth(logits, target, ignore_index=255):
+    """ScanSSC Scan loss along the depth axis. logits (B, C, X, Y, Z), target (B, X, Y, Z) with `ignore_index`.
+    Logits and one-hot labels are cumulatively averaged from the far end of each line (back to front); labels are
+    averaged over the labelled voxels seen so far, and positions that have not yet seen a labelled voxel are skipped."""
+    B, C, X = logits.shape[:3]
+    valid = target != ignore_index
+    t = torch.where(valid, target.long(), torch.zeros_like(target, dtype=torch.long))
+    onehot = F.one_hot(t, C).permute(0, 4, 1, 2, 3).to(logits.dtype) * valid.unsqueeze(1).to(logits.dtype)
+    count = torch.arange(1, X + 1, device=logits.device, dtype=logits.dtype).view(1, 1, X, 1, 1)
+    cum_logit = torch.cumsum(logits.flip(2), dim=2) / count                     # back-to-front mean of logits
+    cum_t = torch.cumsum(onehot.flip(2), dim=2)
+    n_valid = cum_t.sum(1, keepdim=True)
+    cum_t = cum_t / n_valid.clamp(min=1.0)                                      # back-to-front class distribution
+    loss = -(cum_t * F.log_softmax(cum_logit, dim=1)).sum(1)                    # soft-target cross-entropy
+    keep = n_valid.squeeze(1) > 0
+    if not bool(keep.any()):
+        return logits.sum() * 0.0
+    return loss[keep].mean()
