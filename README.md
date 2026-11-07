@@ -13,24 +13,27 @@ This repository is a fork of the official MRA code (`PKU-ICST-MIPL/MRA_TIP`, com
 
 ## 1. What RaCA changes in MRA
 
-MRA's Critical Distribution Alignment (CDA) draws 4,096 "critical" voxels per grid by prediction confidence, draws them **independently** for the fine (128×128×16) and coarse (64×64×8) grids, aligns the two sets with a **symmetric** KL, and supervises the coarse grid with a **strided** copy of the label (every second voxel). RaCA replaces these three design choices; everything else in MRA (view transformation, SGB / SDB, CSA, self-distillation, losses, schedule) is unchanged.
+MRA's Critical Distribution Alignment (CDA) draws 4,096 "critical" voxels per grid by prediction confidence, draws them **independently** for the fine (128×128×16) and coarse (64×64×8) grids, aligns the two sets with a **symmetric** KL, and supervises the coarse grid with a **strided** copy of the label (every second voxel). RaCA replaces these three design choices (C2–C4, this work) and adds a depth-axis scan borrowed from ScanSSC (C1) so that far voxels can read better-observed near voxels. Everything else in MRA (view transformation, SGB / SDB, CSA, self-distillation, losses, schedule) is unchanged.
 
 | Component | What it does | Where | Training / inference |
 |---|---|---|---|
+| **C1** Depth-axis scan (borrowed from ScanSSC, CVPR 2025) | After semantic propagation (SDB) and before the two grids are fused, every forward-axis line of the voxel grid is treated as a sequence and passed through one ScanSSC **Scan block**: pre-norm masked self-attention with a near-to-far **cascade mask** (a voxel attends to itself and to the voxels nearer to the camera; the nearest 50 % of the line is unmasked for all) and a 2-layer FFN, both residual. A **Scan loss** compares the back-to-front cumulative mean of the logits with the same cumulative mean of the one-hot labels (cross-entropy, weight 1), on the fine-grid output and, optionally, on the coarse-grid output. Depth axis only; ScanSSC's width/height blocks, spatial mixing network and tri-axis fusion are not used. | `raca_utils.DepthScanBlock`, `raca_utils.scan_loss_depth`; `self.scan`, `self.scan_down1` in `raca_head.py` | module: training **and inference** (adds parameters and compute); loss: training only |
 | **C2** Stratified shared critical voxels | One set of N = 4,096 voxel-centre locations per frame, drawn by **strata**: foreground (with a sub-quota for rare classes when the frame has any), far background (forward index ≥ 128, i.e. beyond 25.6 m), remaining background, and uniform random. The **same locations** are read on both grids, so the two refined predictions are co-located. Unused budget of an empty stratum is passed down the chain rare → foreground → far → rest → random. | `raca_utils.stratified_critical_voxels`, used by `SharedCDAHead` in `raca_head.py` | training only |
 | **C3** Co-located directed alignment | Per-voxel KL over the **class axis** between the fine and coarse refined predictions at the shared locations, with a stop-gradient on the leading grid. The fine grid leads on rare and foreground voxels; elsewhere the grid with lower predictive entropy leads. Replaces MRA's symmetric `cda_kl_loss`. Requires C2. | `raca_utils.directed_alignment` | training only |
 | **C4** Rare-preserving coarse supervision | Coarse label of each 2×2×2 block = a rare class if any voxel in the block has one, else the majority label (empty included), else 255. CSA map max-pooled instead of strided. Coarse seed **proposal** max-pooled instead of strided. | `raca_utils.coarse_labels_rare_preserving`, `raca_utils.pool_proposal` | labels / CSA: training only; proposal pooling also at inference |
 
-`RaCAHead` has exactly the parameters of `MRAHead` (no new layers), so MRA and SGN checkpoints load unchanged, and `RaCAHead` with `use_c2 = use_c3 = use_c4 = False` is numerically `MRAHead`.
+C2–C4 add no parameters, so MRA and SGN checkpoints load into `RaCAHead` unchanged. C1 adds one Scan block per scanned grid (64 channels, 4 heads; about 34 k parameters each); by default its output projections are zero-initialised, so a warm-started model starts exactly as MRA and the block only acts once trained. `RaCAHead` with `use_c1 = use_c2 = use_c3 = use_c4 = False` is numerically `MRAHead`.
 
 ### Files added or edited
 
 | Path | Status | Content |
 |---|---|---|
-| `projects/mmdet3d_plugin/mra/utils/raca_utils.py` | new | C2 / C3 / C4 as pure-torch functions (torch ≥ 1.9, no `torch.isin`) |
-| `projects/mmdet3d_plugin/mra/dense_heads/raca_head.py` | new | `SharedCDAHead` (MRA's CDA head that can read given locations) and `RaCAHead` (MRA head + C2 / C3 / C4 + loss-weight options) |
+| `projects/mmdet3d_plugin/mra/utils/raca_utils.py` | new | C1 (`DepthScanBlock`, `scan_loss_depth`) and C2 / C3 / C4 as pure-torch code (torch ≥ 1.9, no `torch.isin`) |
+| `projects/mmdet3d_plugin/mra/dense_heads/raca_head.py` | new | `SharedCDAHead` (MRA's CDA head that can read given locations) and `RaCAHead` (MRA head + C1 / C2 / C3 / C4 + loss-weight options) |
 | `projects/mmdet3d_plugin/mra/dense_heads/__init__.py` | one line appended | registers `RaCAHead` |
-| `projects/configs/raca/RaCA-T.py` | new | full method on top of `MRA-T.py` |
+| `projects/configs/raca/RaCA-T.py` | new | full method (C1 + C2 + C3 + C4) on top of `MRA-T.py` |
+| `projects/configs/raca/RaCA-T-C2C3C4.py` | new | training-only components, the configuration of the Kaggle "after" run |
+| `projects/configs/raca/RaCA-T-C1.py`, `RaCA-T-C1-fine.py` | new | C1 on both grids; C1 on the fine grid only |
 | `projects/configs/raca/RaCA-T-C2.py`, `RaCA-T-C2C3.py`, `RaCA-T-C4.py` | new | ablations (C2 only, C2 + C3, C4 only) |
 | `README.md` | rewritten | this file |
 
@@ -40,6 +43,14 @@ Everything else (`mra_head.py`, `cda_header.py`, detectors, datasets, losses, pr
 
 | Option | Default | Meaning |
 |---|---|---|
+| `use_c1` | `False` | depth-axis Scan block(s) and Scan loss |
+| `c1_fine`, `c1_coarse` | `True`, `True` | which grids get a Scan block (`c1_coarse=False` is the fine-grid-only variant) |
+| `c1_heads` | `4` | attention heads of the Scan block (64 channels) |
+| `c1_margin` | `0.5` | nearest share of each forward line that every voxel may attend (ScanSSC default 50 %) |
+| `c1_pos_embed` | `False` | learned positional embedding along the depth axis (ScanSSC uses none) |
+| `c1_zero_init` | `True` | zero-initialise the attention and FFN output projections so the block starts as the identity |
+| `c1_loss_coarse` | `True` | apply the Scan loss to the coarse-grid logits as well |
+| `lambda_scan` | `1.0` | weight of the Scan loss on each grid (ScanSSC: 1) |
 | `use_c2` | `True` | stratified, shared critical voxels |
 | `use_c3` | `True` | co-located directed alignment (needs `use_c2=True`) |
 | `use_c4` | `True` | rare-preserving coarse labels / CSA and max-pooled coarse proposal |
@@ -57,14 +68,17 @@ Rare classes are SemanticKITTI ids 2, 3, 6, 7, 8; the foreground group is MRA's 
 Installation and data preparation are those of MRA (below). Then:
 
 ```bash
-# RaCA-T (full method), 4 GPUs
+# RaCA-T (full method, C1 + C2 + C3 + C4), 4 GPUs
 ./tools/dist_train.sh ./projects/configs/raca/RaCA-T.py 4
 ./tools/dist_test.sh  ./projects/configs/raca/RaCA-T.py ./path/to/ckpt.pth 4
 
-# ablations
-./tools/dist_train.sh ./projects/configs/raca/RaCA-T-C2.py 4     # C2 only
-./tools/dist_train.sh ./projects/configs/raca/RaCA-T-C2C3.py 4   # C2 + C3
-./tools/dist_train.sh ./projects/configs/raca/RaCA-T-C4.py 4     # C4 only
+# ablations (one component group at a time)
+./tools/dist_train.sh ./projects/configs/raca/RaCA-T-C1.py 4        # C1 only, both grids
+./tools/dist_train.sh ./projects/configs/raca/RaCA-T-C1-fine.py 4   # C1 only, fine grid
+./tools/dist_train.sh ./projects/configs/raca/RaCA-T-C2.py 4        # C2 only
+./tools/dist_train.sh ./projects/configs/raca/RaCA-T-C2C3.py 4      # C2 + C3
+./tools/dist_train.sh ./projects/configs/raca/RaCA-T-C4.py 4        # C4 only
+./tools/dist_train.sh ./projects/configs/raca/RaCA-T-C2C3C4.py 4    # C2 + C3 + C4 (the Kaggle "after" run)
 
 # original MRA (unchanged)
 ./tools/dist_train.sh ./projects/configs/mra/MRA-T.py 4
@@ -74,7 +88,7 @@ The RaCA configs inherit every MRA-T setting (data, AdamW 2e-4, cosine schedule,
 
 ## 3. Preliminary result (controlled small-scale run)
 
-Both models were trained under identical conditions on Kaggle: SemanticKITTI subset of **400 training / 150 validation frames**, **6 epochs**, batch 1, learning rate 5e-5, one T4 GPU, seed 0, the **same starting weights** (SGN-T weights with SGN's main branch copied into MRA's coarse branch; the CDA output layers and the fusion conv start random in both runs). "Before" is `MRAHead`; "after" is `RaCAHead` with all three components and default weights. Evaluation uses MRA's `SSCMetrics`, plus four disjoint 12.8 m forward-range bands and a pooled vulnerable-road-user (VRU) IoU over the five rare classes.
+Both models were trained under identical conditions on Kaggle: SemanticKITTI subset of **400 training / 150 validation frames**, **6 epochs**, batch 1, learning rate 5e-5, one T4 GPU, seed 0, the **same starting weights** (SGN-T weights with SGN's main branch copied into MRA's coarse branch; the CDA output layers and the fusion conv start random in both runs). "Before" is `MRAHead`; "after" is `RaCAHead` with C2 + C3 + C4 and default weights (`RaCA-T-C2C3C4.py`); C1 was not part of this run. Evaluation uses MRA's `SSCMetrics`, plus four disjoint 12.8 m forward-range bands and a pooled vulnerable-road-user (VRU) IoU over the five rare classes.
 
 | metric (150 val frames) | MRA (before) | RaCA (after) | change |
 |---|---|---|---|
@@ -98,6 +112,9 @@ These numbers are **not** comparable with the paper's full-dataset results (3,83
 
 ## 4. Notes
 
+- **C1 and ScanSSC.** The Scan block and Scan loss follow the pseudocode in ScanSSC's appendix (Bae, Ha and Kim, *Three Cars Approaching within 100m!*, CVPR 2025, arXiv 2411.16129): mask `triu(ones(X, X), 1)` with the first `X//2` key columns unmasked, pre-norm `MultiheadAttention` + `Linear(C, 2C) → ReLU → Linear(2C, C)` with residuals, and a back-to-front cumulative mean of logits and one-hot labels followed by cross-entropy. Deliberate differences: depth axis only (no width or height block, no spatial mixing network, no tri-axis softmax fusion, since MRA's fusion conv and CDA head already mix spatially); unknown voxels (255) are excluded from the label average and positions that have not yet met a labelled voxel are skipped; the output projections can be zero-initialised. ScanSSC does not state its head count; 4 heads is our choice.
+- **C1 cost.** On the fine grid the block attends over 2,048 lines of length 128 with 64 channels; with 4 heads the attention maps take about 0.5 GB in fp32 during training, plus the Scan loss on the 256×256×32 logits. Use `c1_heads=1` or `c1_coarse=False` if memory is short. Inference time increases accordingly; report it alongside params and GFLOPs.
+- **C1 and warm starts.** The Scan block's parameters do not exist in MRA or SGN checkpoints; `load_checkpoint(..., strict=False)` leaves them at their initial values, which with `c1_zero_init=True` makes the block an identity at the start of training.
 - The Kaggle notebooks that produced the result above (`train-mra-before.ipynb`, `train-mra-after.ipynb`, kept outside this repository) wrote the same code into the cloned repo under the earlier class name `MRAHeadRC`; in this repository the config type is `RaCAHead`. Checkpoints are interchangeable because the parameter names are identical.
 - Environment deviations used on Kaggle (spconv 2.3.6 instead of 2.1.25, mmdet3d 0.17.1 installed without its CUDA operators, torch 1.9.1 + cu111) are notebook-side and do not change this repository.
 - Observations about the released MRA code that matter for interpreting results: the released critical-voxel selection ranks candidates by confidence only (the CSA factor of Eq. 18 is not applied there); the circulated KL in `mra_head.py` is taken over the sample axis; the CSA weight of the mining loss is cast to integer and therefore equals 1. RaCA keeps these as they are except where C2 / C3 replace the corresponding step.
