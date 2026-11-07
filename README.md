@@ -103,7 +103,7 @@ then warns once and does nothing). The cosine schedule is not shortened by an ea
 
 ### Running on Kaggle (one T4, SemanticKITTI subset)
 
-The folder [`kaggle/`](kaggle/README.md) holds everything used for the small-scale runs: an idempotent environment installer, the data expansion script for the compact subset, an optional SGN-T warm-start builder, Kaggle configs for every RaCA configuration and for original MRA, train / eval / compare / smoke-test scripts, and a notebook (`kaggle/kaggle_raca.ipynb`) that runs one configuration end to end. The datasets to attach and the commands are listed in `kaggle/README.md`. The committed protocol starts every run from MRA-T's own initialisation (ImageNet ResNet-50, default init elsewhere; no `load_from`) and trains with `--seed 0 --deterministic`, as `tools/dist_train.sh` does.
+The folder [`kaggle/`](kaggle/README.md) holds everything used for the small-scale runs: an idempotent environment installer, the data expansion script for the compact subset, an optional SGN-T warm-start builder, Kaggle configs for every RaCA configuration and for original MRA, train / eval / compare / smoke-test scripts, and a notebook (`kaggle/kaggle_raca.ipynb`) that runs one configuration end to end. The datasets to attach and the commands are listed in `kaggle/README.md`. The committed protocol starts every run from MRA-T's own initialisation (ImageNet ResNet-50, default init elsewhere; no `load_from`) and trains with `--seed 0 --deterministic`, as `tools/dist_train.sh` does. `kaggle/train.sh` uses one or two GPUs (Kaggle T4 x2 runs MRA's distributed path with the learning rate and warm-up scaled linearly; see `kaggle/README.md`).
 
 ## 3. Preliminary result (controlled small-scale run)
 
@@ -129,7 +129,7 @@ Per class, person (+0.34) and motorcycle (+0.30) improve slightly; car (−3.81)
 
 **Reading of this run.** The stratified set is deliberately hard, so the two critical-voxel CE losses end about four times larger than in MRA (1.09 / 2.24 vs 0.55 / 0.56), and the gradient norm exceeded MRA's clip ceiling of 35 in **62 %** of logged steps (2 % for MRA). Clipping then scales down every gradient, including the dense losses that the common classes rely on. This is the reason the head now exposes `w_mining` and `w_mining_down1`; the planned re-run lowers them so that the total gradient norm matches MRA's. With a single seed and no deterministic flag, differences of a few tenths of a point are within noise; the methodology calls for three seeds per configuration.
 
-These numbers are **not** comparable with the paper's full-dataset results (3,834 training frames, 48 epochs in the released config, 4 GPUs).
+These numbers are **not** comparable with the paper's full-dataset results (3,834 training frames, 4 GPUs, 48 epochs in the upstream config; this fork's `MRA-T.py` sets 24 since commit `f30081b`, matching the paper).
 
 ## 4. Notes
 

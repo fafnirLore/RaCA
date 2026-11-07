@@ -1,6 +1,6 @@
 # Running the experiments on Kaggle (RaCA)
 
-Everything needed to reproduce the small-scale runs on a free Kaggle GPU (one Tesla T4, 16 GB) lives in this folder.
+Everything needed to reproduce the small-scale runs on a free Kaggle GPU session (Tesla T4 x1 or x2, 16 GB each) lives in this folder.
 The notebook `kaggle/kaggle_raca.ipynb` strings the steps together; each step is also a script that can be run by hand.
 
 ## Datasets to attach (right-hand panel → *Add Input*)
@@ -29,11 +29,11 @@ only pretrained weights MRA-T uses. `bash kaggle/get_weights.sh sgn` additionall
 | Rebuild the data | `python kaggle/expand_subset.py <scenes>/kitti_subset/ /tmp/kitti_full/` | both paths end with `/` |
 | Starting weights | nothing to do | MRA's own initialisation: ImageNet ResNet-50 for the backbone, default init elsewhere, identical for every config. Optional SGN-T warm start: `python kaggle/make_warm_start.py ckpts/warm_start.pth` and train with `--cfg-options load_from=ckpts/warm_start.pth` |
 | Smoke test | `python kaggle/smoke_test.py kaggle/configs/raca_full.py --steps 2 --expect-head RaCAHead --expect-keys loss_align_directed,loss_scan` | 2 real training steps (loss keys, peak memory) + the validation path on 2 val frames (`dataset.evaluate`, `EarlyStoppingHook`); `--val-frames 0` skips the latter |
-| Train | `bash kaggle/train.sh kaggle/configs/<run>.py <run>` | one GPU, seed 0, `--deterministic`, validation after every epoch with early stopping (below; `VALIDATE=0` turns validation off); output in `/kaggle/working/runs/<run>/`; add `--cfg-options runner.max_epochs=3` etc. to override the config |
+| Train | `bash kaggle/train.sh kaggle/configs/<run>.py <run>` | all visible GPUs (`GPUS=1` to force one), seed 0, `--deterministic`, validation after every epoch with early stopping (below; `VALIDATE=0` turns validation off); output in `/kaggle/working/runs/<run>/`; add `--cfg-options runner.max_epochs=3` etc. to override the config |
 | Evaluate | `bash kaggle/eval.sh kaggle/configs/<run>.py /kaggle/working/runs/<run>/best_semkitti_SSC_mIoU_epoch_N.pth out.json "label"` (or `latest.pth`) | MRA's `SSCMetrics` + four disjoint 12.8 m range bands, per-class IoU with GT voxel counts, pooled VRU IoU, wIoU |
 | Compare | `python kaggle/compare.py before.json after.json` | before/after table: overall, rare classes, per band, all classes |
 
-Scripts use `/tmp/mra_env/bin/python` by default (`PY=... bash kaggle/train.sh ...` to change). `train.sh` honours `SEED`, `TIMEOUT` (default 11h), `OUT_ROOT` and `VALIDATE` (default 1).
+Scripts use `/tmp/mra_env/bin/python` by default (`PY=... bash kaggle/train.sh ...` to change). `train.sh` honours `SEED`, `TIMEOUT` (default 11h), `OUT_ROOT`, `VALIDATE` (default 1), `GPUS` (default: all visible), `SCALE_LR` (default 1) and `PORT`.
 
 ## Configurations
 
@@ -51,6 +51,28 @@ every run starts from MRA-T's own initialisation (`pretrained` ImageNet ResNet-5
 | `kaggle/configs/raca_c2.py` | RaCA, C2 only |
 | `kaggle/configs/raca_c2c3.py` | RaCA, C2 + C3 |
 | `kaggle/configs/raca_c4.py` | RaCA, C4 only |
+
+## One or two GPUs (T4 x1 / T4 x2)
+
+`train.sh` uses every GPU that `nvidia-smi` lists. On one GPU it runs `tools/train.py` directly. On two it launches
+`python -m torch.distributed.launch --nproc_per_node=2 tools/train.py <config> --launcher pytorch`, i.e. MRA's own
+distributed path (`tools/dist_train.sh`, `MMDistributedDataParallel`, `CustomDistEvalHook` for validation), with batch 1
+per GPU as MRA does. Because the total batch doubles, the script applies the linear scaling rule to the config before
+launching (printed as `GPUS=2 -> linear scaling: ...`):
+
+| setting | 1 GPU (config value) | 2 GPUs (applied by `train.sh`) | rule |
+|---|---|---|---|
+| `optimizer.lr` | 5e-5 | 1e-4 | x GPUs (MRA: 2e-4 for 4 GPUs x batch 1) |
+| `lr_config.warmup_iters` | 500 | 250 | / GPUs, so the warm-up covers the same number of samples |
+| `data.workers_per_gpu` | 4 | 2 | the T4 x2 machine has 4 CPU cores |
+| iterations per epoch | 400 | 200 | 400 training frames / total batch |
+
+`SCALE_LR=0` keeps the config values; your own `--cfg-options` are merged after the automatic ones and win. Epochs, early
+stopping, seed and determinism are unchanged, so a 2-GPU run is the same protocol at half the wall-clock time per epoch,
+not a bit-identical reproduction of a 1-GPU run (different total batch, different data order across ranks). Keep the
+whole ablation on one GPU count. Validation on 2 GPUs goes through `CustomDistEvalHook`, which gathers per-GPU partial
+results through `<run>/.eval_hook/`; `EarlyStoppingHook` takes its decision on rank 0 and broadcasts it. If the data
+loader dies with a shared-memory ("bus error") message, add `--cfg-options data.workers_per_gpu=1`.
 
 ## Validation and early stopping
 
@@ -90,7 +112,8 @@ Single-GPU validation did not work in the released MRA code (mmdet's `EvalHook` 
 | install.sh | ~15 min |
 | expand_subset.py | ~3 min |
 | validation per epoch | ~5 min |
-| MRA-T epoch | ~40 min, 11.7 GB (measured with the earlier warm start and without `--deterministic`; cuDNN deterministic mode can be slower) |
+| MRA-T epoch, 1 GPU | ~40 min, 11.7 GB (measured with the earlier warm start and without `--deterministic`; cuDNN deterministic mode can be slower) |
+| any config, 2 GPUs | not yet measured; expect roughly half the epoch time, same memory per GPU plus NCCL buffers |
 | RaCA C2+C3+C4 epoch | ~53 min, 11.7 GB |
 | evaluate.py (150 frames) | ~5 min |
 | RaCA with C1 | not yet run; expect roughly +0.5–1 GB and a longer epoch |
