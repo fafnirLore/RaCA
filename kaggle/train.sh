@@ -8,6 +8,7 @@
 #   Your own --cfg-options are merged after these, so they win.
 # --deterministic (cuDNN deterministic algorithms, no benchmark autotuning) matches tools/dist_train.sh.
 # Validation runs after every epoch (needed by EarlyStoppingHook and for best_*.pth); VALIDATE=0 passes --no-validate.
+# DETERMINISTIC=0 drops --deterministic (cuDNN then autotunes; can need less memory on a 16 GB T4). Seed 0 either way.
 # Output: /kaggle/working/runs/<run_name>/ (checkpoints, logs, train_full.log). Progress lines are printed live.
 set -o pipefail
 CONFIG=$1; RUN=$2; shift 2
@@ -15,6 +16,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 PY=${PY:-/tmp/mra_env/bin/python}
 OUT=${OUT_ROOT:-/kaggle/working/runs}/$RUN; mkdir -p "$OUT"
 NOVAL=""; [ "${VALIDATE:-1}" = "0" ] && NOVAL="--no-validate"
+DET="--deterministic"; [ "${DETERMINISTIC:-1}" = "0" ] && DET=""
 GPUS=${GPUS:-$(nvidia-smi -L 2>/dev/null | wc -l)}; [ "$GPUS" -ge 1 ] 2>/dev/null || GPUS=1
 
 # Split the caller's "--cfg-options k=v ..." out of the extra args: mmcv's DictAction keeps only the LAST --cfg-options
@@ -45,10 +47,10 @@ else
   LAUNCH="$PY tools/train.py $CONFIG"
   DEVICES=0
 fi
-echo "run $RUN | $GPUS GPU(s) | $LAUNCH ${CFG_ARGS[*]} ${OTHER[*]}"
+echo "run $RUN | $GPUS GPU(s) | $LAUNCH $NOVAL --seed ${SEED:-0} $DET ${CFG_ARGS[*]} ${OTHER[*]}"
 # PYTHONPATH: MRA's train.py imports its own 'projects' package (dist_train.sh does the same)
 PYTHONPATH=$ROOT CUDA_VISIBLE_DEVICES=$DEVICES timeout ${TIMEOUT:-11h} $LAUNCH \
-    --work-dir "$OUT" $NOVAL --seed ${SEED:-0} --deterministic "${CFG_ARGS[@]}" "${OTHER[@]}" 2>&1 \
+    --work-dir "$OUT" $NOVAL --seed ${SEED:-0} $DET "${CFG_ARGS[@]}" "${OTHER[@]}" 2>&1 \
   | tee "$OUT/train_full.log" \
   | grep --line-buffered -E "Epoch \[|Traceback|Error|Saving checkpoint|EarlyStoppingHook|semkitti_SSC_mIoU|Now best|linear scaling" \
   || { echo "TRAINING FAILED - last lines of the log:"; tail -40 "$OUT/train_full.log"; exit 1; }

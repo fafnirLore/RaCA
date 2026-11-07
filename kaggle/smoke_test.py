@@ -1,6 +1,6 @@
 """A few real training steps on the GPU before spending hours on a full run.
 Usage (repo root): python kaggle/smoke_test.py <config> [--steps 2] [--expect-head RaCAHead] [--expect-keys loss_align_directed,loss_scan]
-                                                   [--forbid-keys cda_kl_loss] [--val-frames 2]
+                                                   [--forbid-keys cda_kl_loss] [--val-frames 2] [--no-deterministic]
 Also runs the single-GPU validation path on --val-frames validation frames (dataset.evaluate + EarlyStoppingHook),
 because the real run validates after every epoch; --val-frames 0 skips it.
 """
@@ -19,10 +19,13 @@ p = argparse.ArgumentParser()
 p.add_argument("config"); p.add_argument("--steps", type=int, default=2)
 p.add_argument("--expect-head", default=""); p.add_argument("--expect-keys", default=""); p.add_argument("--forbid-keys", default="")
 p.add_argument("--val-frames", type=int, default=2)
+p.add_argument("--no-deterministic", action="store_true", help="cudnn.deterministic=False, benchmark=True (DETERMINISTIC=0 in train.sh)")
 a = p.parse_args()
 
 cfg = Config.fromfile(a.config)
-set_random_seed(0, deterministic=True)        # as kaggle/train.sh (--seed 0 --deterministic)
+set_random_seed(0, deterministic=not a.no_deterministic)   # as kaggle/train.sh (--seed 0 [--deterministic])
+print(f"cudnn.deterministic={torch.backends.cudnn.deterministic} cudnn.benchmark={torch.backends.cudnn.benchmark} | "
+      f"GPU {torch.cuda.get_device_name(0)} {torch.cuda.get_device_properties(0).total_memory / 2**30:.1f} GB")
 model = build_model(cfg.model, train_cfg=cfg.get("train_cfg"), test_cfg=cfg.get("test_cfg"))
 head = type(model.pts_bbox_head).__name__
 print("head:", head, "| params:", sum(q.numel() for q in model.parameters()))
@@ -40,7 +43,8 @@ for i, data in zip(range(a.steps), loader):
     lv = out["log_vars"]
     extra = " | ".join(f"{k} {lv[k]:.3f}" for k in sorted(lv) if k.startswith(("loss_align", "loss_scan", "cda_kl", "fine_leads")))
     print(f"step {i}: total loss {lv['loss']:.3f} | {extra} | {time.time() - t:.1f}s | "
-          f"peak mem {torch.cuda.max_memory_allocated() / 2**30:.1f} GB", flush=True)
+          f"peak allocated {torch.cuda.max_memory_allocated() / 2**30:.2f} GB | peak reserved "
+          f"{torch.cuda.max_memory_reserved() / 2**30:.2f} GB | now allocated {torch.cuda.memory_allocated() / 2**30:.2f} GB", flush=True)
 print("loss keys:", sorted(k for k in lv if k.startswith("loss")))
 for k in filter(None, a.expect_keys.split(",")):
     assert k in lv, f"expected loss key {k} not found"

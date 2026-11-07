@@ -33,7 +33,7 @@ only pretrained weights MRA-T uses. `bash kaggle/get_weights.sh sgn` additionall
 | Evaluate | `bash kaggle/eval.sh kaggle/configs/<run>.py /kaggle/working/runs/<run>/best_semkitti_SSC_mIoU_epoch_N.pth out.json "label"` (or `latest.pth`) | MRA's `SSCMetrics` + four disjoint 12.8 m range bands, per-class IoU with GT voxel counts, pooled VRU IoU, wIoU |
 | Compare | `python kaggle/compare.py before.json after.json` | before/after table: overall, rare classes, per band, all classes |
 
-Scripts use `/tmp/mra_env/bin/python` by default (`PY=... bash kaggle/train.sh ...` to change). `train.sh` honours `SEED`, `TIMEOUT` (default 11h), `OUT_ROOT`, `VALIDATE` (default 1), `GPUS` (default: all visible), `SCALE_LR` (default 1) and `PORT`.
+Scripts use `/tmp/mra_env/bin/python` by default (`PY=... bash kaggle/train.sh ...` to change). `train.sh` honours `SEED`, `TIMEOUT` (default 11h), `OUT_ROOT`, `VALIDATE` (default 1), `GPUS` (default: all visible), `SCALE_LR` (default 1), `DETERMINISTIC` (default 1; 0 drops `--deterministic`) and `PORT`.
 
 ## Configurations
 
