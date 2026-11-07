@@ -72,4 +72,4 @@ If you find this project helpful, please consider citing the following paper:
 
 ## Kaggle experiments (added in this clone)
 
-The folder [`kaggle/`](kaggle/README.md) contains the scripts, configs and notebook used to train and evaluate MRA-T on a 400 / 150-frame SemanticKITTI subset on a single Kaggle T4 (the "before" run of the RaCA project). It adds files only; no original file is modified. See `kaggle/README.md` for the datasets to attach and the commands.
+The folder [`kaggle/`](kaggle/README.md) contains the scripts, configs and notebook used to train and evaluate MRA-T on a 400 / 150-frame SemanticKITTI subset on a single Kaggle T4 (the "before" run of the RaCA project). Runs start from MRA-T's own initialisation (ImageNet ResNet-50, no `load_from`) and train with `--seed 0 --deterministic` as `tools/dist_train.sh` does. It adds files only; no original file is modified. See `kaggle/README.md` for the datasets to attach and the commands.
