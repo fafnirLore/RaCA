@@ -5,6 +5,7 @@ Usage (repo root): python kaggle/smoke_test.py <config> [--steps 2] [--expect-he
 import os, sys, time, importlib, argparse, torch
 sys.path.insert(0, os.getcwd())
 from mmcv import Config
+from mmdet.apis import set_random_seed
 from mmcv.parallel import MMDataParallel
 from mmcv.runner import load_checkpoint
 from mmdet3d.datasets import build_dataset
@@ -18,6 +19,7 @@ p.add_argument("--expect-head", default=""); p.add_argument("--expect-keys", def
 a = p.parse_args()
 
 cfg = Config.fromfile(a.config)
+set_random_seed(0, deterministic=True)        # as kaggle/train.sh (--seed 0 --deterministic)
 model = build_model(cfg.model, train_cfg=cfg.get("train_cfg"), test_cfg=cfg.get("test_cfg"))
 head = type(model.pts_bbox_head).__name__
 print("head:", head, "| params:", sum(q.numel() for q in model.parameters()))
