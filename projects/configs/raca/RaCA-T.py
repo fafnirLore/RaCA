@@ -1,11 +1,22 @@
 _base_ = ['../mra/MRA-T.py']
 work_dir = './validate_raca/kitti-T'
 
-# RaCA-T: MRA-T (data, optimiser, schedule, grad clip) with the RaCA head. Full method (C2 + C3 + C4).
-# All MRA-T settings are inherited; only the head type and its RaCA options are set here.
+# RaCA-T: full method, C1 + C2 + C3 + C4 (ablation ladder R7).
+# All MRA-T settings (data, optimiser, schedule, grad clip) are inherited; only the head type and its RaCA options are set here.
 model = dict(
     pts_bbox_head=dict(
         type='RaCAHead',
+        # ---- C1: depth-axis scan (ScanSSC Scan block + Scan loss, depth axis only); changes inference ----
+        use_c1=True,
+        c1_fine=True,              # scan the fine grid (128 x 128 x 16)
+        c1_coarse=True,             # scan the coarse grid (64 x 64 x 8); False = R1h (fine grid only)
+        c1_heads=4,                # attention heads (64 channels -> 16 per head)
+        c1_margin=0.5,             # nearest share of each line that every voxel may attend (ScanSSC: 50 %)
+        c1_pos_embed=False,        # learned positional embedding along the depth axis (ScanSSC: none)
+        c1_zero_init=True,         # Scan block starts as the identity (safe for warm starts)
+        c1_loss_coarse=True,       # also apply the scan loss to the coarse-grid logits
+        lambda_scan=1.0,           # weight of the scan loss on each grid (ScanSSC: 1)
+        # ---- C2 / C3 / C4: training-only changes to the critical-voxel alignment ----
         use_c2=True,               # C2: stratified, shared critical voxels (both grids)
         use_c3=True,               # C3: co-located directed alignment (needs C2)
         use_c4=True,               # C4: rare-preserving coarse labels / CSA, max-pooled coarse proposal
