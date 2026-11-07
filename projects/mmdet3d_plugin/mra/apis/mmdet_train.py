@@ -176,8 +176,16 @@ def custom_train_detector(model,
         eval_cfg = cfg.get('evaluation', {})
         eval_cfg['by_epoch'] = cfg.runner['type'] != 'IterBasedRunner'
         eval_cfg['jsonfile_prefix'] = osp.join('val', cfg.work_dir, time.ctime().replace(' ','_').replace(':','_'))
-        eval_hook = CustomDistEvalHook if distributed else EvalHook
-        runner.register_hook(eval_hook(val_dataloader, greater_keys=['mIoU'], **eval_cfg))
+        if distributed:
+            runner.register_hook(CustomDistEvalHook(val_dataloader, greater_keys=['mIoU'], **eval_cfg))
+        else:
+            # RaCA: mmdet's EvalHook hard-codes mmdet.apis.single_gpu_test, which cannot consume MRA's dict
+            # outputs, so single-GPU validation crashed. Use mmcv's EvalHook with MRA's own single-GPU test loop
+            # (the one tools/test.py uses); the metric names are those of dataset.evaluate().
+            from mmcv.runner import EvalHook as MMCVEvalHook
+            from projects.mmdet3d_plugin.mra.apis.test import custom_single_gpu_test
+            runner.register_hook(MMCVEvalHook(val_dataloader, test_fn=custom_single_gpu_test,
+                                              greater_keys=['mIoU'], **eval_cfg))
 
     # user-defined hooks
     if cfg.get('custom_hooks', None):

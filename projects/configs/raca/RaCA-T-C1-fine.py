@@ -27,3 +27,12 @@ model = dict(
         w_mining=1.0,              # weight of the fine-grid mining (CE) loss on critical voxels
         w_mining_down1=1.0,        # weight of the coarse-grid mining (CE) loss on critical voxels
     ))
+
+# Early stopping on the validation mIoU (RaCA addition; MRA-T validates every epoch but never stops early).
+# Needs validation on (train without --no-validate). The best checkpoint is kept as best_semkitti_SSC_mIoU_epoch_N.pth.
+evaluation = dict(interval=1, save_best='semkitti_SSC_mIoU', rule='greater')
+custom_hooks = [dict(type='EarlyStoppingHook', monitor='semkitti_SSC_mIoU', rule='greater',
+                     patience=5,        # stop after this many evaluations without improvement
+                     min_delta=0.0,     # improvement smaller than this (in mIoU points) does not count
+                     min_epochs=10,      # never stop before this many epochs
+                     priority=80)]      # after the evaluation hook (70), before the logger hooks (90)

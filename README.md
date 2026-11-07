@@ -31,6 +31,9 @@ C2–C4 add no parameters, so MRA and SGN checkpoints load into `RaCAHead` uncha
 | `projects/mmdet3d_plugin/mra/utils/raca_utils.py` | new | C1 (`DepthScanBlock`, `scan_loss_depth`) and C2 / C3 / C4 as pure-torch code (torch ≥ 1.9, no `torch.isin`) |
 | `projects/mmdet3d_plugin/mra/dense_heads/raca_head.py` | new | `SharedCDAHead` (MRA's CDA head that can read given locations) and `RaCAHead` (MRA head + C1 / C2 / C3 / C4 + loss-weight options) |
 | `projects/mmdet3d_plugin/mra/dense_heads/__init__.py` | one line appended | registers `RaCAHead` |
+| `projects/mmdet3d_plugin/mra/hooks/early_stopping.py` | new | `EarlyStoppingHook`: stops training when the validation mIoU stops improving |
+| `projects/mmdet3d_plugin/mra/hooks/__init__.py` | one line appended | registers `EarlyStoppingHook` |
+| `projects/mmdet3d_plugin/mra/apis/mmdet_train.py` | one branch edited | single-GPU validation uses mmcv's `EvalHook` with MRA's `custom_single_gpu_test` (mmdet's `EvalHook` cannot read MRA's dict outputs, so validation on one GPU crashed); the multi-GPU path is unchanged |
 | `projects/configs/raca/RaCA-T.py` | new | full method (C1 + C2 + C3 + C4) on top of `MRA-T.py` |
 | `projects/configs/raca/RaCA-T-C2C3C4.py` | new | training-only components, the configuration of the Kaggle "after" run |
 | `projects/configs/raca/RaCA-T-C1.py`, `RaCA-T-C1-fine.py` | new | C1 on both grids; C1 on the fine grid only |
@@ -84,7 +87,19 @@ Installation and data preparation are those of MRA (below). Then:
 ./tools/dist_train.sh ./projects/configs/mra/MRA-T.py 4
 ```
 
-The RaCA configs inherit every MRA-T setting (data, AdamW 2e-4, cosine schedule, gradient clipping at 35) and override only the head.
+The RaCA configs inherit every MRA-T setting (data, AdamW 2e-4, cosine schedule, gradient clipping at 35) and override only the head, plus early stopping:
+
+### Early stopping
+
+Every RaCA config validates after each epoch (as MRA-T does), keeps the best checkpoint
+(`evaluation = dict(interval=1, save_best='semkitti_SSC_mIoU', rule='greater')`) and registers
+`EarlyStoppingHook(monitor='semkitti_SSC_mIoU', rule='greater', patience=5, min_delta=0.0, min_epochs=10, priority=80)`.
+Training ends once the validation mIoU has not improved by more than `min_delta` for `patience` consecutive evaluations
+(never before `min_epochs`); the hook logs the metric and the patience counter after each evaluation and writes
+`<work_dir>/early_stopping.json`. With several GPUs the decision is taken on rank 0 and broadcast. Tune or disable it with
+`--cfg-options custom_hooks.0.patience=8` or `--cfg-options custom_hooks=[]`; `--no-validate` also disables it (the hook
+then warns once and does nothing). The cosine schedule is not shortened by an early stop. The Kaggle configs use
+`patience=2, min_epochs=3` for their 6-epoch schedule. Original MRA-T is unchanged and never stops early.
 
 ### Running on Kaggle (one T4, SemanticKITTI subset)
 

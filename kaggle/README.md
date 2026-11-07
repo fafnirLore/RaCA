@@ -28,12 +28,12 @@ only pretrained weights MRA-T uses. `bash kaggle/get_weights.sh sgn` additionall
 | Download weights | `bash kaggle/get_weights.sh` | ResNet-50 (add `sgn` for the optional SGN-T warm start) |
 | Rebuild the data | `python kaggle/expand_subset.py <scenes>/kitti_subset/ /tmp/kitti_full/` | both paths end with `/` |
 | Starting weights | nothing to do | MRA's own initialisation: ImageNet ResNet-50 for the backbone, default init elsewhere, identical for every config. Optional SGN-T warm start: `python kaggle/make_warm_start.py ckpts/warm_start.pth` and train with `--cfg-options load_from=ckpts/warm_start.pth` |
-| Smoke test | `python kaggle/smoke_test.py kaggle/configs/raca_full.py --steps 2 --expect-head RaCAHead --expect-keys loss_align_directed,loss_scan` | 2 real steps, prints loss keys and peak memory |
-| Train | `bash kaggle/train.sh kaggle/configs/<run>.py <run>` | one GPU, seed 0, `--deterministic`, `--no-validate`; output in `/kaggle/working/runs/<run>/`; add `--cfg-options runner.max_epochs=3` etc. to override the config |
-| Evaluate | `bash kaggle/eval.sh kaggle/configs/<run>.py /kaggle/working/runs/<run>/latest.pth out.json "label"` | MRA's `SSCMetrics` + four disjoint 12.8 m range bands, per-class IoU with GT voxel counts, pooled VRU IoU, wIoU |
+| Smoke test | `python kaggle/smoke_test.py kaggle/configs/raca_full.py --steps 2 --expect-head RaCAHead --expect-keys loss_align_directed,loss_scan` | 2 real training steps (loss keys, peak memory) + the validation path on 2 val frames (`dataset.evaluate`, `EarlyStoppingHook`); `--val-frames 0` skips the latter |
+| Train | `bash kaggle/train.sh kaggle/configs/<run>.py <run>` | one GPU, seed 0, `--deterministic`, validation after every epoch with early stopping (below; `VALIDATE=0` turns validation off); output in `/kaggle/working/runs/<run>/`; add `--cfg-options runner.max_epochs=3` etc. to override the config |
+| Evaluate | `bash kaggle/eval.sh kaggle/configs/<run>.py /kaggle/working/runs/<run>/best_semkitti_SSC_mIoU_epoch_N.pth out.json "label"` (or `latest.pth`) | MRA's `SSCMetrics` + four disjoint 12.8 m range bands, per-class IoU with GT voxel counts, pooled VRU IoU, wIoU |
 | Compare | `python kaggle/compare.py before.json after.json` | before/after table: overall, rare classes, per band, all classes |
 
-Scripts use `/tmp/mra_env/bin/python` by default (`PY=... bash kaggle/train.sh ...` to change). `train.sh` honours `SEED`, `TIMEOUT` (default 11h) and `OUT_ROOT`.
+Scripts use `/tmp/mra_env/bin/python` by default (`PY=... bash kaggle/train.sh ...` to change). `train.sh` honours `SEED`, `TIMEOUT` (default 11h), `OUT_ROOT` and `VALIDATE` (default 1).
 
 ## Configurations
 
@@ -51,6 +51,25 @@ every run starts from MRA-T's own initialisation (`pretrained` ImageNet ResNet-5
 | `kaggle/configs/raca_c2.py` | RaCA, C2 only |
 | `kaggle/configs/raca_c2c3.py` | RaCA, C2 + C3 |
 | `kaggle/configs/raca_c4.py` | RaCA, C4 only |
+
+## Validation and early stopping
+
+`train.sh` runs validation on the 150 validation frames after every epoch (about 5 min each). Every Kaggle config sets
+`evaluation = dict(interval=1, save_best='semkitti_SSC_mIoU', rule='greater')`, so the evaluation hook keeps the best
+checkpoint as `best_semkitti_SSC_mIoU_epoch_N.pth` next to `latest.pth`, and
+`custom_hooks = [dict(type='EarlyStoppingHook', monitor='semkitti_SSC_mIoU', patience=2, min_delta=0.0, min_epochs=3, priority=80)]`,
+which ends training once the validation mIoU has not improved for two consecutive epochs (never before epoch 3). The hook
+logs `EarlyStoppingHook: semkitti_SSC_mIoU = ... (best ... at epoch N, k/2 epochs without improvement)` after each
+evaluation and writes `<run>/early_stopping.json` (best value, best epoch, whether it stopped early, full history).
+Override from the command line, e.g. `--cfg-options custom_hooks.0.patience=3 custom_hooks.0.min_delta=0.1`; the
+cosine learning-rate schedule still spans the configured `max_epochs`, so an early stop ends at a non-zero learning rate.
+The notebook evaluates the best checkpoint when one exists. Note that the stopping decision is taken on the same 150
+frames that are reported as the result, so early stopping is a protocol choice applied identically to every config,
+not an unbiased model selection.
+
+Single-GPU validation did not work in the released MRA code (mmdet's `EvalHook` cannot read MRA's dict outputs);
+`mmdet_train.py` now uses mmcv's `EvalHook` with MRA's own `custom_single_gpu_test` on one GPU. The multi-GPU path
+(`CustomDistEvalHook`) is unchanged.
 
 ## Initial weights and determinism
 
@@ -70,6 +89,7 @@ every run starts from MRA-T's own initialisation (`pretrained` ImageNet ResNet-5
 |---|---|
 | install.sh | ~15 min |
 | expand_subset.py | ~3 min |
+| validation per epoch | ~5 min |
 | MRA-T epoch | ~40 min, 11.7 GB (measured with the earlier warm start and without `--deterministic`; cuDNN deterministic mode can be slower) |
 | RaCA C2+C3+C4 epoch | ~53 min, 11.7 GB |
 | evaluate.py (150 frames) | ~5 min |

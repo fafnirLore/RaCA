@@ -17,3 +17,12 @@ log_config = dict(interval=50, hooks=[dict(type='TextLoggerHook')])
 # Initial weights: MRA's own, i.e. ImageNet ResNet-50 from `pretrained` in MRA-T and the default init for the rest.
 # Optional SGN-T warm start instead:  --cfg-options load_from=ckpts/warm_start.pth   (see kaggle/make_warm_start.py)
 work_dir = '/kaggle/working/runs/raca_c1_fine'
+
+# Early stopping on the validation mIoU (validation on the 150 val frames each epoch, ~5 min; VALIDATE=0 in train.sh disables it).
+# Needs validation on (train without --no-validate). The best checkpoint is kept as best_semkitti_SSC_mIoU_epoch_N.pth.
+evaluation = dict(interval=1, save_best='semkitti_SSC_mIoU', rule='greater')
+custom_hooks = [dict(type='EarlyStoppingHook', monitor='semkitti_SSC_mIoU', rule='greater',
+                     patience=2,        # stop after this many evaluations without improvement
+                     min_delta=0.0,     # improvement smaller than this (in mIoU points) does not count
+                     min_epochs=3,      # never stop before this many epochs
+                     priority=80)]      # after the evaluation hook (70), before the logger hooks (90)
