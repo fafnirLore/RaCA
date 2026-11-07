@@ -1,4 +1,7 @@
-# Running the experiments on Kaggle (MRA_TIP)
+# Running the baseline on Kaggle (original MRA, branch `mra_Og`)
+
+This branch is the unmodified MRA code (upstream commit `d6b560f`) plus this `kaggle/` folder. It contains no RaCA code:
+the RaCA head, utilities and configs live on branch `farquleet_add_module` of the same fork.
 
 Everything needed to reproduce the small-scale runs on a free Kaggle GPU (one Tesla T4, 16 GB) lives in this folder.
 The notebook `kaggle/kaggle_before.ipynb` strings the steps together; each step is also a script that can be run by hand.
@@ -67,4 +70,4 @@ every run starts from MRA-T's own initialisation (`pretrained` ImageNet ResNet-5
 | RaCA with C1 | not yet run; expect roughly +0.5–1 GB and a longer epoch |
 
 Kaggle sessions are limited to 12 h, so one 6-epoch run fits per session; use *Save & Run All (Commit)* to run in the background.
-To use this folder on Kaggle, push this repository (with the `kaggle/` folder) to a GitHub account you control and set `REPO_URL` in the notebook; the upstream MRA repository does not contain these files.
+The notebook clones branch `mra_Og` of `https://github.com/fafnirLore/RaCA.git`; the upstream MRA repository does not contain these files.
