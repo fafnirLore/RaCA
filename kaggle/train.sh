@@ -6,9 +6,9 @@
 #   linear scaling rule is applied to the config: optimizer.lr x GPUS, lr_config.warmup_iters / GPUS,
 #   data.workers_per_gpu = 2 (Kaggle's T4 x2 machine has 4 CPU cores). SCALE_LR=0 keeps the config values.
 #   Your own --cfg-options are merged after these, so they win.
-# --deterministic (cuDNN deterministic algorithms, no benchmark autotuning) matches tools/dist_train.sh.
 # Validation runs after every epoch (needed by EarlyStoppingHook and for best_*.pth); VALIDATE=0 passes --no-validate.
-# DETERMINISTIC=0 drops --deterministic (cuDNN then autotunes; can need less memory on a 16 GB T4). Seed 0 either way.
+# Seed 0 always. DETERMINISTIC=1 adds --deterministic (cuDNN deterministic algorithms, as tools/dist_train.sh); it is OFF by
+#   default because on a 16 GB T4 it raised the peak memory from 11.7 GB to >13 GB and the run goes out of memory.
 # Output: /kaggle/working/runs/<run_name>/ (checkpoints, logs, train_full.log). Progress lines are printed live.
 set -o pipefail
 CONFIG=$1; RUN=$2; shift 2
@@ -16,7 +16,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 PY=${PY:-/tmp/mra_env/bin/python}
 OUT=${OUT_ROOT:-/kaggle/working/runs}/$RUN; mkdir -p "$OUT"
 NOVAL=""; [ "${VALIDATE:-1}" = "0" ] && NOVAL="--no-validate"
-DET="--deterministic"; [ "${DETERMINISTIC:-1}" = "0" ] && DET=""
+DET=""; [ "${DETERMINISTIC:-0}" = "1" ] && DET="--deterministic"
 GPUS=${GPUS:-$(nvidia-smi -L 2>/dev/null | wc -l)}; [ "$GPUS" -ge 1 ] 2>/dev/null || GPUS=1
 
 # Split the caller's "--cfg-options k=v ..." out of the extra args: mmcv's DictAction keeps only the LAST --cfg-options

@@ -1,7 +1,7 @@
 _base_ = ['../../projects/configs/raca/RaCA-T-C1-fine.py']
 # Kaggle run: RaCA, C1 on the fine grid only
 # Subset of SemanticKITTI (400 train / 150 val frames) rebuilt at /tmp/kitti_full/ by kaggle/expand_subset.py,
-# one T4 GPU, batch 1, --deterministic as in tools/dist_train.sh. Learning rate 5e-5 = MRA's 2e-4 / 4 (linear scaling from 4 GPUs x 1 to 1 x 1).
+# one or two T4 GPUs, batch 1 per GPU, seed 0. Learning rate 5e-5 = MRA's 2e-4 / 4 (linear scaling from 4 GPUs x 1 to 1 x 1).
 # Override anything with --cfg-options, e.g. --cfg-options runner.max_epochs=3 optimizer.lr=2.5e-5
 _root_ = '/tmp/kitti_full/'
 data = dict(

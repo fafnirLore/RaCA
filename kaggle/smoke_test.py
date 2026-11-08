@@ -1,6 +1,6 @@
 """A few real training steps on the GPU before spending hours on a full run.
 Usage (repo root): python kaggle/smoke_test.py <config> [--steps 2] [--expect-head RaCAHead] [--expect-keys loss_align_directed,loss_scan]
-                                                   [--forbid-keys cda_kl_loss] [--val-frames 2] [--no-deterministic]
+                                                   [--forbid-keys cda_kl_loss] [--val-frames 2] [--deterministic]
 Also runs the single-GPU validation path on --val-frames validation frames (dataset.evaluate + EarlyStoppingHook),
 because the real run validates after every epoch; --val-frames 0 skips it.
 """
@@ -19,11 +19,11 @@ p = argparse.ArgumentParser()
 p.add_argument("config"); p.add_argument("--steps", type=int, default=2)
 p.add_argument("--expect-head", default=""); p.add_argument("--expect-keys", default=""); p.add_argument("--forbid-keys", default="")
 p.add_argument("--val-frames", type=int, default=2)
-p.add_argument("--no-deterministic", action="store_true", help="cudnn.deterministic=False, benchmark=True (DETERMINISTIC=0 in train.sh)")
+p.add_argument("--deterministic", action="store_true", help="cudnn.deterministic=True as --deterministic / DETERMINISTIC=1 in train.sh (needs >13 GB on a T4)")
 a = p.parse_args()
 
 cfg = Config.fromfile(a.config)
-set_random_seed(0, deterministic=not a.no_deterministic)   # as kaggle/train.sh (--seed 0 [--deterministic])
+set_random_seed(0, deterministic=a.deterministic)          # as kaggle/train.sh (--seed 0, --deterministic only with DETERMINISTIC=1)
 print(f"cudnn.deterministic={torch.backends.cudnn.deterministic} cudnn.benchmark={torch.backends.cudnn.benchmark} | "
       f"GPU {torch.cuda.get_device_name(0)} {torch.cuda.get_device_properties(0).total_memory / 2**30:.1f} GB")
 model = build_model(cfg.model, train_cfg=cfg.get("train_cfg"), test_cfg=cfg.get("test_cfg"))
