@@ -41,6 +41,8 @@ EOF
   AUTO_OPTS=("optimizer.lr=$LR" "lr_config.warmup_iters=$WARM" "data.workers_per_gpu=2")
   echo "GPUS=$GPUS -> linear scaling: ${AUTO_OPTS[*]}"
 fi
+# Progress line every LOG_INTERVAL iterations (config: 50, i.e. several minutes of silence on a T4). Logging only.
+AUTO_OPTS+=("log_config.interval=${LOG_INTERVAL:-10}")
 CFG_ARGS=(); if [ ${#AUTO_OPTS[@]} -gt 0 ] || [ ${#USER_OPTS[@]} -gt 0 ]; then CFG_ARGS=(--cfg-options "${AUTO_OPTS[@]}" "${USER_OPTS[@]}"); fi
 
 if [ "$GPUS" -gt 1 ]; then
@@ -50,12 +52,13 @@ else
   LAUNCH="$PY tools/train.py $CONFIG"
   DEVICES=0
 fi
+echo "startup takes 2-4 min (model build, dataset index) before the first Epoch line; full log: $OUT/train_full.log"
 echo "run $RUN | $GPUS GPU(s) | $LAUNCH $NOVAL --seed ${SEED:-0} $DET ${CFG_ARGS[*]} ${OTHER[*]}"
 # PYTHONPATH: MRA's train.py imports its own 'projects' package (dist_train.sh does the same)
 PYTHONPATH=$ROOT CUDA_VISIBLE_DEVICES=$DEVICES timeout ${TIMEOUT:-11h} $LAUNCH \
     --work-dir "$OUT" $NOVAL --seed ${SEED:-0} $DET "${CFG_ARGS[@]}" "${OTHER[@]}" 2>&1 \
   | tee "$OUT/train_full.log" \
-  | grep --line-buffered -E "Epoch \[|Traceback|Error|Saving checkpoint|EarlyStoppingHook|semkitti_SSC_mIoU|Now best|linear scaling" \
+  | grep --line-buffered -E "Epoch \[|Traceback|Error|Saving checkpoint|EarlyStoppingHook|semkitti_SSC_mIoU|Now best|linear scaling|Start running|workflow:|load checkpoint|Distributed training|Set random seed" \
   || { echo "TRAINING FAILED - last lines of the log:"; tail -40 "$OUT/train_full.log"; exit 1; }
 ls -la "$OUT"/*.pth
 [ -f "$OUT/early_stopping.json" ] && echo "early stopping record: $OUT/early_stopping.json" && $PY -c "import json,sys; d=json.load(open(sys.argv[1])); print('best', d['monitor'], d['best'], 'at epoch', d['best_epoch'], '| stopped early:', d['stopped_early'], '| last epoch:', d['last_epoch'])" "$OUT/early_stopping.json"
