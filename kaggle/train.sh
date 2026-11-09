@@ -7,8 +7,8 @@
 #   data.workers_per_gpu = 2 (Kaggle's T4 x2 machine has 4 CPU cores). SCALE_LR=0 keeps the config values.
 #   Your own --cfg-options are merged after these, so they win.
 # Validation runs after every epoch (needed by EarlyStoppingHook and for best_*.pth); VALIDATE=0 passes --no-validate.
-# Seed 0 always. DETERMINISTIC=1 adds --deterministic (cuDNN deterministic algorithms, as tools/dist_train.sh); it is OFF by
-#   default because on a 16 GB T4 it raised the peak memory from 11.7 GB to >13 GB and the run goes out of memory.
+# Seed 0 always. DETERMINISTIC=1 adds --deterministic (cuDNN deterministic algorithms, as tools/dist_train.sh). Off by default:
+#   the setting known to fit a 16 GB T4 (11.7 GB logged) ran without it; measure with kaggle/smoke_test.py --deterministic.
 # Output: /kaggle/working/runs/<run_name>/ (checkpoints, logs, train_full.log). Progress lines are printed live.
 set -o pipefail
 CONFIG=$1; RUN=$2; shift 2

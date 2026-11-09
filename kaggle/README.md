@@ -8,7 +8,7 @@ The notebook `kaggle/kaggle_raca.ipynb` strings the steps together; each step is
 | Dataset | Where it comes from | What this folder reads from it |
 |---|---|---|
 | **scenes** (SemanticKITTI subset, 400 train / 150 val frames) | Output of the step-2 "building-subset" notebook (`daniyalimran/building-subset`), saved compactly to fit Kaggle's 20 GB output limit | `**/kitti_subset/selection.json` (summary of the split) and the `dataset/` tree next to it |
-| **mra-before-run** (output of the original-MRA run) | Output of the "before" notebook (`daniyalimran/mra-before-run`) | `**/runs/before/results_trained.json` only (for `compare.py`); its `warm_start.pth` is no longer used |
+| **mra-before-run** (output of the original-MRA run) | Output of the "before" notebook (`daniyalimran/mra-before-run`) | `**/ckpts/warm_start.pth` (shared starting weights; otherwise rebuilt from SGN-T) and `**/runs/before/results_trained.json` (for `compare.py`) |
 
 The compact scenes layout and how it is expanded back to MRA's format are documented in `expand_subset.py`:
 labels `labels/XX/<frame>_1_1.npy` are stored as uint8 and rewritten as float32 (values 0–19, 255), point clouds
@@ -16,18 +16,18 @@ labels `labels/XX/<frame>_1_1.npy` are stored as uint8 and rewritten as float32 
 writes them), and images, voxels, calib, poses and `*_1_2.npy` are symlinked. Expansion writes to `/tmp/kitti_full/`
 (about 3 minutes).
 
-Weights downloaded by `get_weights.sh`: ImageNet ResNet-50 (`ckpts/resnet50-19c8e357.pth`, PyTorch model zoo), the
-only pretrained weights MRA-T uses. `bash kaggle/get_weights.sh sgn` additionally fetches SGN-T SemanticKITTI
-(`ckpts/sgn-T.pth`, SGN model zoo on Google Drive, id `1cDKX6SpyoAHr-cfmjTRDsNF-3_JgtH3p`) for the optional warm start.
+Weights downloaded by `get_weights.sh sgn`: ImageNet ResNet-50 (`ckpts/resnet50-19c8e357.pth`, PyTorch model zoo; MRA-T's
+`pretrained`) and SGN-T SemanticKITTI (`ckpts/sgn-T.pth`, SGN model zoo on Google Drive, id `1cDKX6SpyoAHr-cfmjTRDsNF-3_JgtH3p`)
+for the shared warm start (without the `sgn` argument only ResNet-50 is fetched).
 
 ## Steps and commands (run from the repository root)
 
 | Step | Command | Notes |
 |---|---|---|
 | Install the software | `bash kaggle/install.sh` | ~15 min; Python 3.8 env at `/tmp/mra_env`, torch 1.9.1+cu111, mmcv-full 1.4.0, mmdet 2.14.0, mmseg 0.14.1, spconv-cu113 2.3.6, torch-scatter 2.0.8, mmdet3d v0.17.1 without compiled CUDA ops (`patch_mmdet3d.py`) |
-| Download weights | `bash kaggle/get_weights.sh` | ResNet-50 (add `sgn` for the optional SGN-T warm start) |
+| Download weights | `bash kaggle/get_weights.sh sgn` | ResNet-50 and SGN-T |
 | Rebuild the data | `python kaggle/expand_subset.py <scenes>/kitti_subset/ /tmp/kitti_full/` | both paths end with `/` |
-| Starting weights | nothing to do | MRA's own initialisation: ImageNet ResNet-50 for the backbone, default init elsewhere, identical for every config. Optional SGN-T warm start: `python kaggle/make_warm_start.py ckpts/warm_start.pth` and train with `--cfg-options load_from=ckpts/warm_start.pth` |
+| Starting weights | `/tmp/mra_env/bin/python kaggle/make_warm_start.py ckpts/warm_start.pth` | SGN-T weights + SGN's main branch copied into MRA's coarse branch; 15 tensors stay random (fusion conv, CDA heads). Skip when `warm_start.pth` from the before run is attached: copy it instead, so all runs share one start. Required on a T4, see below |
 | Smoke test | `python kaggle/smoke_test.py kaggle/configs/raca_full.py --steps 2 --expect-head RaCAHead --expect-keys loss_align_directed,loss_scan` | 2 real training steps (loss keys, peak memory) + the validation path on 2 val frames (`dataset.evaluate`, `EarlyStoppingHook`); `--val-frames 0` skips the latter |
 | Train | `bash kaggle/train.sh kaggle/configs/<run>.py <run>` | all visible GPUs (`GPUS=1` to force one), seed 0, validation after every epoch with early stopping (below; `VALIDATE=0` turns validation off); output in `/kaggle/working/runs/<run>/`; add `--cfg-options runner.max_epochs=3` etc. to override the config |
 | Evaluate | `bash kaggle/eval.sh kaggle/configs/<run>.py /kaggle/working/runs/<run>/best_semkitti_SSC_mIoU_epoch_N.pth out.json "label"` (or `latest.pth`) | MRA's `SSCMetrics` + four disjoint 12.8 m range bands, per-class IoU with GT voxel counts, pooled VRU IoU, wIoU |
@@ -38,8 +38,7 @@ Scripts use `/tmp/mra_env/bin/python` by default (`PY=... bash kaggle/train.sh .
 ## Configurations
 
 All Kaggle configs inherit a repository config and change only the data root (`/tmp/kitti_full/`), the schedule (6 epochs,
-learning rate 5e-5 = 2e-4 / 4 for batch 1 on one GPU) and checkpoint/log settings. Initial weights are not changed:
-every run starts from MRA-T's own initialisation (`pretrained` ImageNet ResNet-50, default init for the rest).
+learning rate 5e-5 = 2e-4 / 4 for batch 1 on one GPU) checkpoint/log settings and `load_from = 'ckpts/warm_start.pth'` (shared SGN-T warm start, see below).
 
 | Config | Trains |
 |---|---|
@@ -95,19 +94,21 @@ Single-GPU validation did not work in the released MRA code (mmdet's `EvalHook` 
 
 ## Initial weights and determinism
 
-- **Initial weights.** The configs set no `load_from`; the model is built and initialised exactly as MRA-T builds it
-  (ImageNet ResNet-50 for the image backbone, PyTorch / mmcv default init for everything else). All configs therefore
-  start from the same point for a given seed. The SGN-T warm start used in the first preliminary runs remains available
-  as an opt-in (`make_warm_start.py`, `--cfg-options load_from=ckpts/warm_start.pth`).
-- **Seed and determinism.** `train.sh` always passes `--seed 0` (Python, NumPy, torch and data-loader seeds, as in
-  `tools/train.py`). It does **not** pass `--deterministic` by default. That flag (used by `tools/dist_train.sh`) sets
-  `cudnn.deterministic = True`, which restricts cuDNN to deterministic convolution algorithms whose workspaces are larger:
-  on a T4 the C2 + C3 + C4 configuration went from a logged 11.7 GB (the earlier notebooks, `--seed 0` only) to 13.0 GB on
-  the first step and ran out of memory on the second, where PyTorch has about 13.3 GB of the card. The flag never made the
-  run bit-exact anyway: spconv and torch-scatter kernels use atomic adds whose summation order is not fixed. Repeats with the
-  same seed therefore agree closely but not to the last digit, with or without the flag. `DETERMINISTIC=1 bash kaggle/train.sh ...`
-  restores it for GPUs with more memory; `SEED=1 ...` changes the seed. The smoke test uses the same default and prints the
-  cuDNN flags and peak memory per step (`--deterministic` to measure the other setting).
+- **Initial weights: shared SGN-T warm start, because MRA's own initialisation does not fit a T4.** MRA-T starts from
+  ImageNet ResNet-50 only. Its sparse branch takes every voxel whose point-cloud occupancy logit is positive as a seed
+  (`raca_head.py`: `proposal = (pts_occ > 0)`), and a randomly initialised occupancy head gives logits around zero, so about
+  half of the 128x128x16 grid becomes seeds for the sparse convolutions and the semantic header. Measured with the smoke test
+  on a T4 (PyTorch gets about 13.3 GB of the card): `raca_c2c3c4` from MRA's own init allocates 13.0 GB on step 0 and runs out
+  of memory, with `--deterministic` on or off; the same code with the SGN-T warm start trained at a logged 11.7 GB. The warm
+  start (`make_warm_start.py`: SGN-T's 674 matching tensors, SGN's main branch copied into MRA's coarse branch, 15 tensors random)
+  is therefore the Kaggle protocol for every config, including `mra_before`; it is a documented deviation from MRA's recipe and it
+  is identical for all runs. `--cfg-options load_from=None` reproduces MRA's own start on a larger GPU.
+- **Seed and determinism.** `train.sh` always passes `--seed 0` (Python, NumPy, torch and data-loader seeds). `--deterministic`
+  (`cudnn.deterministic = True`, as `tools/dist_train.sh`) is off by default: the configuration known to fit the T4 ran without
+  it, and its memory cost on this model has not been measured (the earlier attribution of the out-of-memory to this flag was
+  wrong; the cause is the initialisation above). `DETERMINISTIC=1 bash kaggle/train.sh ...` turns it on; the smoke test takes
+  `--deterministic` and prints peak memory, so its cost can be measured in two minutes. Neither setting is bit-exact: spconv and
+  torch-scatter kernels use atomic adds. `SEED=1 ...` changes the seed.
 
 ## Observed on a T4 (400 training frames, batch 1)
 
@@ -116,7 +117,7 @@ Single-GPU validation did not work in the released MRA code (mmdet's `EvalHook` 
 | install.sh | ~15 min |
 | expand_subset.py | ~3 min |
 | validation per epoch | ~5 min |
-| MRA-T epoch, 1 GPU | ~40 min, 11.7 GB (logged by mmcv in the earlier notebooks: `--seed 0`, SGN-T warm start; with `--deterministic` the same config needs >13 GB and does not fit) |
+| MRA-T epoch, 1 GPU | ~40 min, 11.7 GB (logged by mmcv: `--seed 0`, SGN-T warm start; from MRA's own initialisation the same config needs > 13 GB and does not fit) |
 | any config, 2 GPUs | not yet measured; expect roughly half the epoch time, same memory per GPU plus NCCL buffers |
 | RaCA C2+C3+C4 epoch | ~53 min, 11.7 GB |
 | evaluate.py (150 frames) | ~5 min |

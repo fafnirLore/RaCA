@@ -14,8 +14,10 @@ total_epochs = 6
 runner = dict(type='EpochBasedRunner', max_epochs=total_epochs)
 checkpoint_config = dict(interval=1, max_keep_ckpts=1)
 log_config = dict(interval=50, hooks=[dict(type='TextLoggerHook')])
-# Initial weights: MRA's own, i.e. ImageNet ResNet-50 from `pretrained` in MRA-T and the default init for the rest.
-# Optional SGN-T warm start instead:  --cfg-options load_from=ckpts/warm_start.pth   (see kaggle/make_warm_start.py)
+# Starting weights: SGN-T warm start shared by every run (kaggle/make_warm_start.py). MRA's own initialisation (ImageNet
+# ResNet-50 only) does not fit a 16 GB T4: the sparse branch seeds every voxel with occupancy logit > 0, and a random occupancy
+# head proposes about half the grid (> 13 GB on the first step, measured). --cfg-options load_from=None to try it anyway.
+load_from = 'ckpts/warm_start.pth'
 work_dir = '/kaggle/working/runs/raca_c2c3c4'
 
 # Early stopping on the validation mIoU (validation on the 150 val frames each epoch, ~5 min; VALIDATE=0 in train.sh disables it).

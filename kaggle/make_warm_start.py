@@ -1,6 +1,6 @@
-"""OPTIONAL: build SGN-T warm-start weights. The Kaggle configs do NOT use this by default; they start from MRA's own
-initialisation (ImageNet ResNet-50 + default init). To use it: bash kaggle/get_weights.sh sgn, run this script, then train
-with --cfg-options load_from=ckpts/warm_start.pth. It was used for the first preliminary runs (see the root README).
+"""Build the SGN-T starting weights shared by every Kaggle run ("before" = MRA, "after" = RaCA), so all start from one point.
+Needed on a 16 GB T4: with MRA's own initialisation the sparse branch seeds about half the grid (occupancy logits ~0) and the
+first steps need > 13 GB; with SGN-T's occupancy head the run stays at 11.7 GB. Requires: bash kaggle/get_weights.sh sgn
 Usage: python kaggle/make_warm_start.py [ckpts/warm_start.pth] [projects/configs/mra/MRA-T.py]   (run from the repo root)
 
 MRA's code is built on SGN, and SGN-T's trained SemanticKITTI weights fill 86% of MRA.
