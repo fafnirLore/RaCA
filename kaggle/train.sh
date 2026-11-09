@@ -17,6 +17,9 @@ PY=${PY:-/tmp/mra_env/bin/python}
 OUT=${OUT_ROOT:-/kaggle/working/runs}/$RUN; mkdir -p "$OUT"
 NOVAL=""; [ "${VALIDATE:-1}" = "0" ] && NOVAL="--no-validate"
 DET=""; [ "${DETERMINISTIC:-0}" = "1" ] && DET="--deterministic"
+# Starting weights: when the config's load_from file is missing, copy it from an attached input or build it from SGN-T.
+LOAD_FROM=$($PY -c "import sys; from mmcv import Config; print(Config.fromfile(sys.argv[1]).get('load_from') or '')" "$CONFIG")
+if [[ " $* " != *" load_from="* ]] && [ -n "$LOAD_FROM" ] && [ ! -s "$LOAD_FROM" ]; then bash kaggle/ensure_warm_start.sh "$LOAD_FROM" || exit 1; fi
 GPUS=${GPUS:-$(nvidia-smi -L 2>/dev/null | wc -l)}; [ "$GPUS" -ge 1 ] 2>/dev/null || GPUS=1
 
 # Split the caller's "--cfg-options k=v ..." out of the extra args: mmcv's DictAction keeps only the LAST --cfg-options

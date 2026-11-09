@@ -32,6 +32,9 @@ print("head:", head, "| params:", sum(q.numel() for q in model.parameters()))
 if a.expect_head:
     assert head == a.expect_head, f"expected head {a.expect_head}, got {head}"
 if cfg.get("load_from"):
+    if not os.path.isfile(cfg.load_from):                  # shared starting weights missing: copy from an attached input or build
+        import subprocess
+        subprocess.run(["bash", "kaggle/ensure_warm_start.sh", cfg.load_from], check=True)
     ck = load_checkpoint(model, cfg.load_from, map_location="cpu", strict=False)
 model = MMDataParallel(model.cuda(), device_ids=[0]).train()
 loader = build_dataloader(build_dataset(cfg.data.train), 1, 2, num_gpus=1, dist=False, shuffle=True, seed=0)
