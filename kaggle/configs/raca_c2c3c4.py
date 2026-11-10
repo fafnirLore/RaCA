@@ -23,7 +23,7 @@ work_dir = '/kaggle/working/runs/raca_c2c3c4'
 # Early stopping on the validation mIoU (validation on the 150 val frames each epoch, ~5 min; VALIDATE=0 in train.sh disables it).
 # Needs validation on (train without --no-validate). The best checkpoint is kept as best_semkitti_SSC_mIoU_epoch_N.pth.
 evaluation = dict(interval=1, save_best='semkitti_SSC_mIoU', rule='greater')
-custom_hooks = [dict(type='EarlyStoppingHook', monitor='loss', rule='greater',
+custom_hooks = [dict(type='EarlyStoppingHook', monitor='semkitti_SSC_mIoU', rule='greater',
                      patience=3,        # stop after this many evaluations without improvement
                      min_delta=0.0,     # improvement smaller than this (in mIoU points) does not count
                      min_epochs=10,      # never stop before this many epochs
