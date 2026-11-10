@@ -71,6 +71,10 @@ if a.val_frames > 0:
     for h in hooks:
         h = {k: v for k, v in h.items() if k not in ("type", "priority")}
         es = EarlyStoppingHook(**h)
+        if es.source == "train":                     # monitors a training log variable (e.g. the total loss)
+            assert es.monitor in lv, f"EarlyStoppingHook monitors training variable {es.monitor!r}, not in log_vars {sorted(lv)}"
+            class _R: outputs = dict(log_vars=lv)
+            es.before_train_epoch(_R); es.after_train_iter(_R); scores = dict(scores, **{es.monitor: lv[es.monitor]})
         assert es.monitor in scores, f"EarlyStoppingHook monitors {es.monitor!r}, not in dataset.evaluate() keys {sorted(scores)}"
 
         class _Runner:                               # just enough of EpochBasedRunner for the hook
@@ -79,7 +83,7 @@ if a.val_frames > 0:
             import logging; logger = logging.getLogger("smoke")
         es.after_train_epoch(_Runner)
         assert es.best == float(scores[es.monitor]) and es.best_epoch == 1
-        print(f"EarlyStoppingHook ok: monitor={es.monitor} rule={es.rule} patience={es.patience} min_epochs={es.min_epochs}")
+        print(f"EarlyStoppingHook ok: monitor={es.monitor} source={es.source} rule={es.rule} patience={es.patience} min_epochs={es.min_epochs}")
     if not hooks:
         print("no EarlyStoppingHook in this config")
 print("SMOKE TEST OK")

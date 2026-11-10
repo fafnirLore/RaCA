@@ -88,6 +88,12 @@ The notebook evaluates the best checkpoint when one exists. Note that the stoppi
 frames that are reported as the result, so early stopping is a protocol choice applied identically to every config,
 not an unbiased model selection.
 
+`raca_c2c3c4.py` currently differs from the other configs: 24 epochs and early stopping on the total training loss
+(`monitor='loss', source='train', rule='less'`, patience 3, not before epoch 10). With `source='train'` the hook averages
+the logged training variable over the epoch; `loss` is the sum of all loss terms. There is no validation loss, because
+MRA's `forward_train` updates the EMA teacher and cannot be run on validation frames without side effects. The best
+checkpoint is still chosen by validation mIoU.
+
 Single-GPU validation did not work in the released MRA code (mmdet's `EvalHook` cannot read MRA's dict outputs);
 `mmdet_train.py` now uses mmcv's `EvalHook` with MRA's own `custom_single_gpu_test` on one GPU. The multi-GPU path
 (`CustomDistEvalHook`) is unchanged.

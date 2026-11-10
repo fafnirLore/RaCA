@@ -16,6 +16,11 @@ which clear the log buffer)::
                          patience=3, min_delta=0.0, min_epochs=0, priority=80)]
 
 Validation must be on (``tools/train.py`` without ``--no-validate``); otherwise the hook only logs a warning once.
+
+``source='train'`` monitors a training log variable instead, averaged over all iterations of the epoch, e.g. the total
+training loss (``monitor='loss'``: the sum of all loss terms, as logged by mmcv; use ``rule='less'``). No validation is
+needed for it. Under distributed training mmdet already averages log variables over the ranks. There is no validation
+loss: MRA's ``forward_train`` updates the EMA teacher, so it cannot be run on validation frames without side effects.
 The record of every evaluation is written to ``<work_dir>/early_stopping.json``.
 """
 import json
@@ -33,8 +38,10 @@ class EarlyStoppingHook(Hook):
              'less': lambda new, best, d: new < best - d}
 
     def __init__(self, monitor='semkitti_SSC_mIoU', rule='greater', patience=3, min_delta=0.0, min_epochs=0,
-                 stop_training=True, json_name='early_stopping.json'):
+                 stop_training=True, json_name='early_stopping.json', source='val'):
         assert rule in self.rules, f"rule must be 'greater' or 'less', got {rule!r}"
+        assert source in ('val', 'train'), f"source must be 'val' or 'train', got {source!r}"
+        self.source, self._sum, self._n = source, 0.0, 0
         assert patience >= 1 and min_delta >= 0
         self.monitor, self.rule, self.patience, self.min_delta = monitor, rule, patience, float(min_delta)
         self.min_epochs, self.stop_training, self.json_name = min_epochs, stop_training, json_name
@@ -47,7 +54,10 @@ class EarlyStoppingHook(Hook):
 
     def _decide(self, runner):
         """Returns (value or None, stop) on rank 0; value None means the metric was not found."""
-        value = runner.log_buffer.output.get(self.monitor, None)
+        if self.source == 'train':
+            value = self._sum / self._n if self._n else None       # epoch mean of the training log variable
+        else:
+            value = runner.log_buffer.output.get(self.monitor, None)
         if value is None:
             return None, False
         value = float(value)
@@ -62,13 +72,22 @@ class EarlyStoppingHook(Hook):
         return value, stop
 
     def _dump(self, runner, stopped):
-        rec = dict(monitor=self.monitor, rule=self.rule, patience=self.patience, min_delta=self.min_delta,
+        rec = dict(monitor=self.monitor, source=self.source, rule=self.rule, patience=self.patience, min_delta=self.min_delta,
                    min_epochs=self.min_epochs, best=self.best, best_epoch=self.best_epoch,
                    stopped_early=stopped, last_epoch=runner.epoch + 1, history=self.history)
         with open(osp.join(runner.work_dir, self.json_name), 'w') as f:
             json.dump(rec, f, indent=1)
 
     # ------------------------------------------------------------------ hook
+    def before_train_epoch(self, runner):
+        self._sum, self._n = 0.0, 0
+
+    def after_train_iter(self, runner):
+        if self.source == 'train':
+            v = (runner.outputs or {}).get('log_vars', {}).get(self.monitor, None)
+            if v is not None:
+                self._sum += float(v); self._n += 1
+
     def after_train_epoch(self, runner):
         rank, world_size = get_dist_info()
         value, stop = (None, False)

@@ -20,11 +20,11 @@ log_config = dict(interval=50, hooks=[dict(type='TextLoggerHook')])
 load_from = 'ckpts/warm_start.pth'
 work_dir = '/kaggle/working/runs/raca_c2c3c4'
 
-# Early stopping on the validation mIoU (validation on the 150 val frames each epoch, ~5 min; VALIDATE=0 in train.sh disables it).
-# Needs validation on (train without --no-validate). The best checkpoint is kept as best_semkitti_SSC_mIoU_epoch_N.pth.
+# Early stopping on the total training loss ('loss' = sum of all loss terms, mean over the epoch's iterations; source='train').
+# Validation still runs each epoch (~5 min; VALIDATE=0 in train.sh disables it) and keeps best_semkitti_SSC_mIoU_epoch_N.pth.
 evaluation = dict(interval=1, save_best='semkitti_SSC_mIoU', rule='greater')
-custom_hooks = [dict(type='EarlyStoppingHook', monitor='semkitti_SSC_mIoU', rule='greater',
-                     patience=3,        # stop after this many evaluations without improvement
-                     min_delta=0.0,     # improvement smaller than this (in mIoU points) does not count
+custom_hooks = [dict(type='EarlyStoppingHook', monitor='loss', source='train', rule='less',
+                     patience=3,        # stop after this many epochs without improvement
+                     min_delta=0.0,     # a decrease of the loss smaller than this does not count
                      min_epochs=10,      # never stop before this many epochs
-                     priority=80)]      # after the evaluation hook (70), before the logger hooks (90)
+                     priority=80)]
