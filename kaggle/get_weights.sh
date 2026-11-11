@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Download the ImageNet ResNet-50 weights MRA starts from (MRA-T's `pretrained`). With the argument `sgn` also
-# download SGN-T's SemanticKITTI weights, only needed for the optional warm start (kaggle/make_warm_start.py).
+# download SGN-T's SemanticKITTI weights, needed for the shared warm start (kaggle/make_warm_start.py, kaggle/ensure_warm_start.sh).
 # Writes to <repo>/ckpts/. Usage: bash kaggle/get_weights.sh [sgn]
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"; mkdir -p ckpts
 GDOWN=${GDOWN:-/tmp/mra_env/bin/gdown}

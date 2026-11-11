@@ -1,7 +1,7 @@
 _base_ = ['../../projects/configs/mra/MRA-T.py']
 # Kaggle run: original MRA-T (the 'before' run)
 # Subset of SemanticKITTI (400 train / 150 val frames) rebuilt at /tmp/kitti_full/ by kaggle/expand_subset.py,
-# one T4 GPU, batch 1, --deterministic as in tools/dist_train.sh. Learning rate 5e-5 = MRA's 2e-4 / 4 (linear scaling from 4 GPUs x 1 to 1 x 1).
+# one T4 GPU, batch 1, seed 0. Learning rate 5e-5 = MRA's 2e-4 / 4 (linear scaling from 4 GPUs x 1 to 1 x 1).
 # Override anything with --cfg-options, e.g. --cfg-options runner.max_epochs=3 optimizer.lr=2.5e-5
 _root_ = '/tmp/kitti_full/'
 data = dict(
@@ -14,6 +14,8 @@ total_epochs = 6
 runner = dict(type='EpochBasedRunner', max_epochs=total_epochs)
 checkpoint_config = dict(interval=1, max_keep_ckpts=1)
 log_config = dict(interval=50, hooks=[dict(type='TextLoggerHook')])
-# Initial weights: MRA's own, i.e. ImageNet ResNet-50 from `pretrained` in MRA-T and the default init for the rest.
-# Optional SGN-T warm start instead:  --cfg-options load_from=ckpts/warm_start.pth   (see kaggle/make_warm_start.py)
+# Starting weights: SGN-T warm start shared with the RaCA runs (kaggle/make_warm_start.py). MRA's own initialisation (ImageNet
+# ResNet-50 only) does not fit a 16 GB T4: the sparse branch seeds every voxel with occupancy logit > 0, and a random occupancy
+# head proposes about half the grid (> 13 GB on the first step, measured on the RaCA branch). --cfg-options load_from=None to try it anyway.
+load_from = 'ckpts/warm_start.pth'
 work_dir = '/kaggle/working/runs/mra_before'
