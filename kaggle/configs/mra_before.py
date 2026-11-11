@@ -10,7 +10,7 @@ data = dict(
     val=dict(data_root=_root_, preprocess_root=_root_ + 'dataset'),
     test=dict(data_root=_root_, preprocess_root=_root_ + 'dataset'))
 optimizer = dict(lr=5e-5)
-total_epochs = 6
+total_epochs = 22
 runner = dict(type='EpochBasedRunner', max_epochs=total_epochs)
 checkpoint_config = dict(interval=1, max_keep_ckpts=1)
 log_config = dict(interval=50, hooks=[dict(type='TextLoggerHook')])
