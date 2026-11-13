@@ -48,8 +48,8 @@ and files under 1 GB uploaded through its file browser. So:
 
 `prepare_data.py` accepts a folder, a `.zip` / `.tar(.gz)` archive, `hf://datasets/<user>/<repo>[/sub]`,
 `kaggle://datasets/<user>/<slug>` (a Kaggle dataset), `kaggle://kernels/<user>/<slug>` (the output of a Kaggle
-notebook), or `auto` (search the machine). Private Kaggle data needs `KAGGLE_USERNAME` and `KAGGLE_KEY` in the
-notebook's `.env` (kaggle.com → Settings → API → Create New Token). It recognises two layouts:
+notebook), or `auto` (search the machine). Private Kaggle data needs `KAGGLE_API_TOKEN` in the
+notebook's `.env` (kaggle.com → Settings → API → Generate New Token; older keys: `KAGGLE_USERNAME` + `KAGGLE_KEY`). It recognises two layouts:
 
 | Layout | Recognised by | What happens |
 |---|---|---|

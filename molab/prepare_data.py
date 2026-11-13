@@ -8,7 +8,7 @@ SOURCE may be
   hf://datasets/<user>/<repo>[/sub] downloaded from the Hugging Face Hub to /tmp/kitti_src (HF_TOKEN for private repos)
   kaggle://datasets/<user>/<slug>   a Kaggle dataset, downloaded and unzipped to /tmp/kitti_src
   kaggle://kernels/<user>/<slug>    the output of a Kaggle notebook, downloaded to /tmp/kitti_src
-                                    (private: KAGGLE_USERNAME and KAGGLE_KEY in the environment, or ~/.kaggle/kaggle.json)
+                                    (private: KAGGLE_API_TOKEN in the environment; older keys: KAGGLE_USERNAME + KAGGLE_KEY)
 
 Two layouts are recognised:
   compact  the Kaggle "scenes" subset (kitti_subset/selection.json next to dataset/): uint8 labels and x,y,z point
@@ -68,6 +68,29 @@ def from_hub(url):
     return STAGE
 
 
+def kaggle_cli():
+    """The current Kaggle command-line tool in its own small environment (/tmp/kaggle_env), so that its
+    dependencies cannot disturb MRA's pinned packages. Current versions understand KAGGLE_API_TOKEN."""
+    import shutil
+    env = "/tmp/kaggle_env"; cli = env + "/bin/kaggle"
+    if os.path.exists(cli):
+        return cli
+    log = open("/tmp/kaggle_env.log", "w")
+    def ok(cmd):
+        return subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT).returncode == 0
+    uv = shutil.which("uv")
+    if uv and ok([uv, "venv", "-q", "--python", "3.12", env]) and ok([uv, "pip", "install", "-q", "--python", env + "/bin/python", "kaggle"]) and os.path.exists(cli):
+        return cli
+    for py in ("python3.13", "python3.12", "python3.11", "python3", sys.executable):
+        py = shutil.which(py) or (py if os.path.exists(py) else None)
+        if not py:
+            continue
+        shutil.rmtree(env, ignore_errors=True)
+        if ok([py, "-m", "venv", env]) and ok([env + "/bin/python", "-m", "pip", "install", "-q", "kaggle"]) and os.path.exists(cli):
+            return cli
+    raise RuntimeError("could not install the Kaggle command-line tool, see /tmp/kaggle_env.log")
+
+
 def from_kaggle(url):
     parts = url[len("kaggle://"):].strip("/").split("/")
     kind = "datasets"
@@ -79,12 +102,11 @@ def from_kaggle(url):
     marker = os.path.join(STAGE, ".kaggle_" + kind + "_" + ref.replace("/", "_"))
     if os.path.exists(marker):
         return STAGE
-    assert (os.environ.get("KAGGLE_USERNAME") and os.environ.get("KAGGLE_KEY")) or os.path.exists(os.path.expanduser("~/.kaggle/kaggle.json")), \
-        ("Kaggle credentials not found: put KAGGLE_USERNAME and KAGGLE_KEY in the notebook's .env "
-         "(kaggle.com -> Settings -> API -> Create New Token gives both values)")
-    cli = os.path.join(os.path.dirname(sys.executable), "kaggle")
-    if not os.path.exists(cli):
-        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "kaggle==1.6.17"], check=True)
+    token = os.environ.get("KAGGLE_API_TOKEN") or os.path.exists(os.path.expanduser("~/.kaggle/access_token"))
+    legacy = (os.environ.get("KAGGLE_USERNAME") and os.environ.get("KAGGLE_KEY")) or os.path.exists(os.path.expanduser("~/.kaggle/kaggle.json"))
+    assert token or legacy, ("Kaggle credentials not found: put KAGGLE_API_TOKEN=<your token> in the notebook's .env "
+                             "(kaggle.com -> Settings -> API -> Generate New Token). Older keys: KAGGLE_USERNAME and KAGGLE_KEY.")
+    cli = kaggle_cli()
     cmd = [cli, "datasets", "download", "-d", ref, "-p", STAGE, "--unzip"] if kind == "datasets" else [cli, "kernels", "output", ref, "-p", STAGE]
     print(f"downloading Kaggle {kind[:-1]} {ref} -> {STAGE} (14 GB takes a while)", flush=True)
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL if kind == "kernels" else None)
