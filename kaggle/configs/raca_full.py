@@ -10,7 +10,7 @@ data = dict(
     val=dict(data_root=_root_, preprocess_root=_root_ + 'dataset'),
     test=dict(data_root=_root_, preprocess_root=_root_ + 'dataset'))
 optimizer = dict(lr=5e-5)
-total_epochs = 6
+total_epochs = 22
 runner = dict(type='EpochBasedRunner', max_epochs=total_epochs)
 checkpoint_config = dict(interval=1, max_keep_ckpts=1)
 log_config = dict(interval=50, hooks=[dict(type='TextLoggerHook')])
@@ -24,7 +24,7 @@ work_dir = '/kaggle/working/runs/raca_full'
 # Needs validation on (train without --no-validate). The best checkpoint is kept as best_semkitti_SSC_mIoU_epoch_N.pth.
 evaluation = dict(interval=1, save_best='semkitti_SSC_mIoU', rule='greater')
 custom_hooks = [dict(type='EarlyStoppingHook', monitor='semkitti_SSC_mIoU', rule='greater',
-                     patience=2,        # stop after this many evaluations without improvement
+                     patience=4,        # stop after this many evaluations without improvement
                      min_delta=0.0,     # improvement smaller than this (in mIoU points) does not count
-                     min_epochs=3,      # never stop before this many epochs
+                     min_epochs=8,      # never stop before this many epochs
                      priority=80)]      # after the evaluation hook (70), before the logger hooks (90)
