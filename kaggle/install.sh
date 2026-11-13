@@ -48,9 +48,12 @@ cd /tmp && rm -rf mmdetection3d
 git clone -q https://github.com/open-mmlab/mmdetection3d.git && cd mmdetection3d && git checkout -q v0.17.1
 $PY "$HERE/patch_mmdet3d.py" /tmp/mmdetection3d | tail -1
 sed -i 's/from numba.errors import/from numba.core.errors import/' mmdet3d/datasets/pipelines/data_augment_utils.py
-$PIP install -q -c /tmp/constraints.txt numba==0.53.0 networkx==2.2 plyfile trimesh==2.35.39 scikit-image==0.19.3 \
-  nuscenes-devkit==1.1.9 lyft_dataset_sdk==0.0.8 tensorboard==2.11.2 > /tmp/pip3.log 2>&1 \
-  || { tail -40 /tmp/pip3.log; echo "FAILED (mmdet3d dependencies)"; exit 1; }
+DEPS="numba==0.53.0 networkx==2.2 plyfile trimesh==2.35.39 scikit-image==0.19.3 nuscenes-devkit==1.1.9 lyft_dataset_sdk==0.0.8 tensorboard==2.11.2"
+# Some of these ship only as source archives. If pip's isolated build environment comes up without setuptools (seen on molab:
+# "setuptools is not available in the build environment"), build them with the setuptools 59.5.0 + wheel installed in step 2.
+$PIP install -q -c /tmp/constraints.txt $DEPS > /tmp/pip3.log 2>&1 \
+  || { echo "  retrying without pip build isolation"; $PIP install -q -c /tmp/constraints.txt --no-build-isolation $DEPS > /tmp/pip3.log 2>&1; } \
+  || { tail -40 /tmp/pip3.log; echo "pip-related environment variables:"; env | grep -i -E "^(PIP|UV|PYTHON|VIRTUAL_ENV|CONDA)"; echo "FAILED (mmdet3d dependencies)"; exit 1; }
 $PIP install -v -e . --no-deps --no-build-isolation > /tmp/mmdet3d_build.log 2>&1 \
   || { tail -60 /tmp/mmdet3d_build.log; echo "FAILED (mmdet3d build)"; exit 1; }
 cd /tmp && $PY -c "import mmdet3d, mmdet3d.models, mmdet3d.datasets; print('mmdet3d', mmdet3d.__version__)" && echo "OK: environment ready at /tmp/mra_env"
