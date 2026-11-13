@@ -116,6 +116,31 @@ Single-GPU validation did not work in the released MRA code (mmdet's `EvalHook` 
   `--deterministic` and prints peak memory, so its cost can be measured in two minutes. Neither setting is bit-exact: spconv and
   torch-scatter kernels use atomic adds. `SEED=1 ...` changes the seed.
 
+## molab, one 96 GB GPU (git tag `molab-96gb`)
+
+[molab](https://molab.marimo.io) offers one NVIDIA RTX Pro 6000 Blackwell (96 GB), 4 CPUs, 32 GB RAM, 12-hour sessions.
+Open the notebook from GitHub:
+`https://molab.marimo.io/github/fafnirLore/RaCA/blob/farquleet_add_module/kaggle/molab_raca.py`
+
+| File | Purpose |
+|---|---|
+| `kaggle/molab_raca.py` | marimo notebook with the same steps as `kaggle_raca.ipynb` (install, GPU check, data, smoke test, train, evaluate); outputs go to `~/raca_work/runs/<run>/` |
+| `kaggle/configs/molab_raca_full.py` | `raca_full.py` with `load_from = None`: full method C1-C4 from MRA's own initialisation |
+| `kaggle/configs/molab_mra_before.py` | `mra_before.py` with `load_from = None`: the baseline under the same protocol |
+| `kaggle/check_gpu.py` | runs a dense and a sparse convolution on the GPU with the installed PyTorch and stops with an explanation when that fails |
+
+What the larger GPU changes: the SGN-T warm start is dropped (it existed only because MRA's own initialisation needs
+> 13 GB on the first steps), `--deterministic` is on (`DETERMINISTIC=1`), and C1 fits. Batch size, learning rate, data,
+epochs and seed are those of the Kaggle configs. These runs are comparable with each other, not with the warm-started
+Kaggle runs.
+
+**Not yet run, and one known risk.** Nothing in this section has been executed on molab. MRA's stack is pinned to
+PyTorch 1.9.1 built for CUDA 11.1, whose binaries carry GPU kernels only up to the RTX 30 generation; Blackwell GPUs
+need a much newer PyTorch, which mmcv-full 1.4.0 / mmdet3d 0.17.1 do not support. `check_gpu.py` (step 1b of the
+notebook) tests exactly this before any data or training time is spent. If it fails, the stack has to be ported; no
+config can fix it. Also unverified: that molab's container allows the micromamba install to `/tmp`, and where the
+scenes subset is mounted (`SCENES` in the notebook).
+
 ## Observed on a T4 (400 training frames, batch 1)
 
 | Item | Time / memory |
