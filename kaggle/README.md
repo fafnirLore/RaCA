@@ -141,6 +141,11 @@ notebook) tests exactly this before any data or training time is spent. If it fa
 config can fix it. Also unverified: that molab's container allows the micromamba install to `/tmp`, and that its disk holds the scenes
 subset twice over (the download plus the rebuilt labels and point clouds).
 
+Google Drive: with `DRIVE_DIR` set in the notebook (and Drive connected through molab's *Add remote storage*), the
+logs, `early_stopping.json`, the newest `epoch_N.pth` and the best checkpoint are copied to `<DRIVE_DIR>/<RUN>/` after every
+epoch through `gdrive_fsspec`, and `results_trained.json` after evaluation. A failed copy is reported and does not stop
+training. Not yet run against a real Drive.
+
 Data on molab: the notebook downloads the scenes subset from Kaggle with `kagglehub.dataset_download(KAGGLE_DATASET)`
 (default `daniyalimran/building-subset1`). A private dataset needs `KAGGLE_USERNAME` and `KAGGLE_KEY` in the environment;
 `SCENES` points the notebook at a copy already on disk instead.
