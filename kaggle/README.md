@@ -138,8 +138,12 @@ Kaggle runs.
 PyTorch 1.9.1 built for CUDA 11.1, whose binaries carry GPU kernels only up to the RTX 30 generation; Blackwell GPUs
 need a much newer PyTorch, which mmcv-full 1.4.0 / mmdet3d 0.17.1 do not support. `check_gpu.py` (step 1b of the
 notebook) tests exactly this before any data or training time is spent. If it fails, the stack has to be ported; no
-config can fix it. Also unverified: that molab's container allows the micromamba install to `/tmp`, and where the
-scenes subset is mounted (`SCENES` in the notebook).
+config can fix it. Also unverified: that molab's container allows the micromamba install to `/tmp`, and that its disk holds the scenes
+subset twice over (the download plus the rebuilt labels and point clouds).
+
+Data on molab: the notebook downloads the scenes subset from Kaggle with `kagglehub.dataset_download(KAGGLE_DATASET)`
+(default `daniyalimran/building-subset1`). A private dataset needs `KAGGLE_USERNAME` and `KAGGLE_KEY` in the environment;
+`SCENES` points the notebook at a copy already on disk instead.
 
 ## Observed on a T4 (400 training frames, batch 1)
 

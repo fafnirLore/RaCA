@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["marimo", "kagglehub"]
+# ///
 # molab notebook (marimo) for RaCA / MRA on one 96 GB GPU. Open with:
 #   https://molab.marimo.io/github/fafnirLore/RaCA/blob/farquleet_add_module/kaggle/molab_raca.py
 # Mirrors kaggle/kaggle_raca.ipynb; everything it does is in the repository's kaggle/ folder (see kaggle/README.md).
@@ -23,8 +27,11 @@ def _(mo):
         **Before running**
 
         1. Attach the GPU from the notebook specs button in the header.
-        2. Make the **scenes** subset available (the folder that contains `kitti_subset/selection.json`), e.g. through
-           molab's remote storage, and set `SCENES` below to that `kitti_subset/` folder. Leave it empty to search for it.
+        2. Data: the **scenes** subset is downloaded from Kaggle (`KAGGLE_DATASET` below) with `kagglehub`. A public
+           dataset needs nothing else. For a private one, set the environment variables `KAGGLE_USERNAME` and
+           `KAGGLE_KEY` (kaggle.com → Settings → API → Create New Token) as notebook secrets before pressing Start;
+           do not write the key into this file. To use a copy that is already on disk, set `SCENES` to its
+           `kitti_subset/` folder.
         3. Set `RUN` (`molab_raca_full` or `molab_mra_before`; any `kaggle/configs/<RUN>.py` works) and press **Start**.
 
         Differences from the Kaggle notebook: starting weights are MRA's own (no SGN-T warm start, which was only needed
@@ -45,14 +52,15 @@ def _(mo, os):
     REPO_URL = "https://github.com/fafnirLore/RaCA.git"
     BRANCH = "farquleet_add_module"
     EXTRA = ""                       # extra train.py args, e.g. "--cfg-options runner.max_epochs=3"
-    SCENES = ""                      # .../kitti_subset/ (contains selection.json); "" = search under ~, /data, /mnt and the cwd
+    SCENES = ""                      # .../kitti_subset/ already on disk (contains selection.json); "" = download from Kaggle
+    KAGGLE_DATASET = "daniyalimran/building-subset1"   # Kaggle dataset holding kitti_subset/ (400 train / 150 val frames)
     DETERMINISTIC = "1"              # "1" adds --deterministic as tools/dist_train.sh; "0" turns it off
     WORK = os.path.expanduser("~/raca_work")
     REPO = f"{WORK}/RaCA"
     OUT_ROOT = f"{WORK}/runs"
     start = mo.ui.run_button(label="Start")
     start
-    return BRANCH, DETERMINISTIC, EXTRA, OUT_ROOT, REPO, REPO_URL, RUN, SCENES, WORK, start
+    return BRANCH, DETERMINISTIC, EXTRA, KAGGLE_DATASET, OUT_ROOT, REPO, REPO_URL, RUN, SCENES, WORK, start
 
 
 @app.cell
@@ -86,13 +94,18 @@ def _(BRANCH, REPO, REPO_URL, WORK, mo, os, sh, start):
 
 
 @app.cell
-def _(REPO, SCENES, glob, installed, json, os, sh):
-    # 2. Data: find the saved subset and rebuild MRA's file layout at /tmp/kitti_full/ (~3 min)
+def _(KAGGLE_DATASET, REPO, SCENES, glob, installed, json, os, sh):
+    # 2. Data: download the saved subset from Kaggle (unless SCENES is set) and rebuild MRA's file layout at /tmp/kitti_full/
     assert installed
-    _hits = [os.path.join(SCENES, "selection.json")] if SCENES else [
-        h for root in (os.path.expanduser("~"), "/data", "/mnt", os.getcwd())
-        for h in glob.glob(f"{root}/**/kitti_subset/selection.json", recursive=True)]
-    assert _hits and os.path.isfile(_hits[0]), "scenes subset not found: set SCENES to the kitti_subset/ folder (see the top of this notebook)"
+    if SCENES:
+        _hits = [os.path.join(SCENES, "selection.json")]
+    else:
+        import kagglehub                                   # cached under ~/.cache/kagglehub; a second call does not download again
+        _root = kagglehub.dataset_download(KAGGLE_DATASET)
+        print("Kaggle dataset", KAGGLE_DATASET, "at", _root)
+        sh(f"du -sh {_root}; df -h {_root} /tmp | cat")
+        _hits = glob.glob(f"{_root}/**/kitti_subset/selection.json", recursive=True)
+    assert _hits and os.path.isfile(_hits[0]), "kitti_subset/selection.json not found: check KAGGLE_DATASET or set SCENES (see the top of this notebook)"
     SRC = os.path.dirname(_hits[0]) + "/"
     _s = json.load(open(_hits[0]))["summary"]
     print("subset:", SRC, f"| train frames {_s['train']['frames']} | val frames {_s['val']['frames']}")
