@@ -42,7 +42,8 @@ and files under 1 GB uploaded through its file browser. So:
 - `BACKUP_TO` copies the newest checkpoint, the logs and the results to a folder or to a private Hugging Face
   dataset repository every 10 minutes and at the end; `train.sh` resumes from `<run>/latest.pth`, and the notebook
   restores that file from the backup when the run folder is empty. Without `BACKUP_TO`, download
-  `results_trained.json` and `latest.pth` before the session ends.
+  `<run>_results.zip` (written next to the notebook by step 7: logs, results and the trained model) before the
+  session ends.
 
 ## Dataset (`DATA`)
 

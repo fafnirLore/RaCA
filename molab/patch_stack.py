@@ -6,7 +6,12 @@
 #    so `import mmcv.ops` (done by mmdet at import time) fails. MRA calls none of these operators (its sparse layers
 #    come from spconv, its scatter ops from torch-scatter), so a placeholder that raises when an operator is actually
 #    called keeps the imports working - the same idea as kaggle/patch_mmdet3d.py.
-# 2. Version asserts. mmdet 2.14 / mmseg 0.14 / mmdet3d 0.17 refuse mmcv > 1.4.0; mmcv 1.7.2 is API-compatible for
+# 2. Duplicate registrations. mmcv 1.7 ships its own sparse-convolution layers and registers them as 'SparseConv2d',
+#    'SubMConv3d', ... in CONV_LAYERS; mmdet3d 0.17 registers its own copies under the same names, which mmcv 1.4 did not
+#    have, so `import mmdet3d.models` stops with "KeyError: SparseConv2d is already registered". A registration that
+#    clashes with one from a *different* package now replaces it (what force=True does) instead of raising; a clash
+#    inside one package still raises. MRA uses neither copy (its sparse layers come from the spconv package directly).
+# 3. Version asserts. mmdet 2.14 / mmseg 0.14 / mmdet3d 0.17 refuse mmcv > 1.4.0; mmcv 1.7.2 is API-compatible for
 #    what MRA uses and is the 1.x release that supports PyTorch 2.
 import os, re, sys, importlib.util
 
@@ -26,6 +31,14 @@ def __getattr__(name):
         raise NotImplementedError("mmcv._ext." + name + " is not compiled in this environment (mmcv lite)")
     _not_built.__name__ = name
     return _not_built
+
+
+def get_compiler_version():          # read by mmcv.utils.collect_env when training starts
+    return "n/a (mmcv lite)"
+
+
+def get_compiling_cuda_version():
+    return "n/a (mmcv lite)"
 '''
 
 mmcv_dir = pkg_dir("mmcv")
@@ -36,6 +49,28 @@ if compiled:
 else:
     open(ext, "w").write(STUB)
     print("placeholder:", ext)
+
+
+REG_OLD = "            if not force and name in self._module_dict:"
+REG_NEW = ("            if not force and name in self._module_dict and (self._module_dict[name].__module__.split('.')[0]"
+           " == module.__module__.split('.')[0]):  # patched by molab/patch_stack.py")
+reg = os.path.join(mmcv_dir, "utils", "registry.py")
+src = open(reg).read()
+if REG_NEW in src:
+    print("registry already patched:", reg)
+else:
+    assert src.count(REG_OLD) == 1, f"unexpected mmcv registry code in {reg}; cannot patch duplicate registrations"
+    open(reg, "w").write(src.replace(REG_OLD, REG_NEW))
+    print("registry patched (cross-package re-registration allowed):", reg)
+
+
+# PyTorch >= 2.1 expects a torch.device in _get_stream; mmcv 1.7.2's scatter (used by MMDataParallel) passes a GPU index.
+FN = os.path.join(mmcv_dir, "parallel", "_functions.py")
+src = open(FN).read()
+if "_get_stream(device) for device in target_gpus" in src:
+    open(FN, "w").write(src.replace("_get_stream(device) for device in target_gpus",
+                                    "_get_stream(torch.device('cuda', device)) for device in target_gpus"))
+    print("scatter patched for PyTorch 2:", FN)
 
 
 def relax(path, names):

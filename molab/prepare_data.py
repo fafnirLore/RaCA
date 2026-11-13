@@ -79,14 +79,14 @@ def kaggle_cli():
     def ok(cmd):
         return subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT).returncode == 0
     uv = shutil.which("uv")
-    if uv and ok([uv, "venv", "-q", "--python", "3.12", env]) and ok([uv, "pip", "install", "-q", "--python", env + "/bin/python", "kaggle"]) and os.path.exists(cli):
+    if uv and ok([uv, "venv", "-q", "--python", "3.12", env]) and ok([uv, "pip", "install", "-q", "--python", env + "/bin/python", "kaggle", "six"]) and os.path.exists(cli):
         return cli
     for py in ("python3.13", "python3.12", "python3.11", "python3", sys.executable):
         py = shutil.which(py) or (py if os.path.exists(py) else None)
         if not py:
             continue
         shutil.rmtree(env, ignore_errors=True)
-        if ok([py, "-m", "venv", env]) and ok([env + "/bin/python", "-m", "pip", "install", "-q", "kaggle"]) and os.path.exists(cli):
+        if ok([py, "-m", "venv", env]) and ok([env + "/bin/python", "-m", "pip", "install", "-q", "kaggle", "six"]) and os.path.exists(cli):
             return cli
     raise RuntimeError("could not install the Kaggle command-line tool, see /tmp/kaggle_env.log")
 

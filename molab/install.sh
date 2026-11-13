@@ -108,6 +108,8 @@ SPCONV_KIND=""
 if [ "$CUDA_TAG" = "cpu" ]; then
   $PIP install -q -c $C spconv==2.3.6 > "$LOG/pip3.log" 2>&1 || { tail -30 "$LOG/pip3.log"; echo "FAILED (spconv cpu)"; exit 1; }
   SPCONV_KIND="spconv 2.3.6 (cpu)"
+elif spconv_gpu_ok 2>/dev/null; then
+  SPCONV_KIND="$($PIP list 2>/dev/null | grep -iE '^spconv' | head -1 | tr -s ' ') (already installed, GPU check passed)"
 else
   if [ "$CUDA_TAG" = "cu128" ] && mkdir -p /tmp/mra_wheels && cd /tmp/mra_wheels \
      && curl -fsSL -o $CUMM_WHL $REL/$CUMM_WHL && curl -fsSL -o $SPCONV_WHL $REL/$SPCONV_WHL \
@@ -116,8 +118,10 @@ else
     SPCONV_KIND="spconv 2.3.8 cu128, native sm_120 kernels"
   else
     echo "  native-Blackwell spconv wheels unavailable or failed their GPU check - falling back to upstream spconv-cu126 (PTX JIT)"
-    $PIP uninstall -q -y spconv-cu128 cumm-cu128 >> "$LOG/pip3.log" 2>&1
-    $PIP install -q -c $C spconv-cu126 >> "$LOG/pip3.log" 2>&1 && spconv_gpu_ok \
+    echo "  (reason: last lines of $LOG/pip3.log and $LOG/spconv_check.log)"; tail -4 "$LOG/pip3.log" | sed 's/^/    /'; tail -4 "$LOG/spconv_check.log" 2>/dev/null | sed 's/^/    /'
+    # remove every spconv / cumm build first: they share module folders, so a partial uninstall would break the other
+    $PIP uninstall -q -y spconv-cu128 cumm-cu128 spconv-cu126 cumm-cu126 >> "$LOG/pip3.log" 2>&1
+    $PIP install -q -c $C --force-reinstall spconv-cu126 >> "$LOG/pip3.log" 2>&1 && spconv_gpu_ok \
       || { tail -30 "$LOG/pip3.log"; tail -30 "$LOG/spconv_check.log"; echo "FAILED (spconv: no build runs a sparse convolution on this GPU)"; exit 1; }
     SPCONV_KIND="spconv-cu126 (PTX JIT on Blackwell)"
   fi
@@ -154,7 +158,8 @@ cd /tmp/mmdetection3d
 $PY "$HERE/../kaggle/patch_mmdet3d.py" /tmp/mmdetection3d | tail -1
 sed -i 's/from numba.errors import/from numba.core.errors import/' mmdet3d/datasets/pipelines/data_augment_utils.py
 $PIP install -q -c $C numba==0.56.4 networkx==2.8.8 plyfile trimesh==3.23.5 scikit-image==0.19.3 scikit-learn==1.2.2 \
-    pyquaternion cachetools descartes fire tqdm tensorboard==2.11.2 "protobuf<4" > "$LOG/pip5.log" 2>&1 \
+    pyquaternion cachetools descartes fire tqdm tensorboard==2.11.2 "protobuf<4" \
+    Shapely==1.8.5.post1 matplotlib==3.5.3 pandas==1.5.3 plotly pycocotools "ipython<9" > "$LOG/pip5.log" 2>&1 \
   && $PIP install -q -c $C --no-deps nuscenes-devkit==1.1.9 lyft_dataset_sdk==0.0.8 >> "$LOG/pip5.log" 2>&1 \
   || { tail -40 "$LOG/pip5.log"; echo "FAILED (mmdet3d dependencies)"; exit 1; }
 $PIP install -q -e . --no-deps --no-build-isolation > "$LOG/mmdet3d_build.log" 2>&1 \
