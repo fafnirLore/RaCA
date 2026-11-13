@@ -6,6 +6,9 @@ SOURCE may be
   a folder                          anywhere above .../dataset/sequences (searched recursively, depth-limited)
   a .zip / .tar / .tar.gz file      extracted to /tmp/kitti_src first
   hf://datasets/<user>/<repo>[/sub] downloaded from the Hugging Face Hub to /tmp/kitti_src (HF_TOKEN for private repos)
+  kaggle://datasets/<user>/<slug>   a Kaggle dataset, downloaded and unzipped to /tmp/kitti_src
+  kaggle://kernels/<user>/<slug>    the output of a Kaggle notebook, downloaded to /tmp/kitti_src
+                                    (private: KAGGLE_USERNAME and KAGGLE_KEY in the environment, or ~/.kaggle/kaggle.json)
 
 Two layouts are recognised:
   compact  the Kaggle "scenes" subset (kitti_subset/selection.json next to dataset/): uint8 labels and x,y,z point
@@ -65,13 +68,41 @@ def from_hub(url):
     return STAGE
 
 
+def from_kaggle(url):
+    parts = url[len("kaggle://"):].strip("/").split("/")
+    kind = "datasets"
+    if parts[0] in ("datasets", "kernels", "notebooks", "code"):
+        kind = "datasets" if parts[0] == "datasets" else "kernels"; parts = parts[1:]
+    assert len(parts) == 2, f"expected kaggle://datasets/<user>/<slug> or kaggle://kernels/<user>/<slug>, got {url!r}"
+    ref = "/".join(parts)
+    os.makedirs(STAGE, exist_ok=True)
+    marker = os.path.join(STAGE, ".kaggle_" + kind + "_" + ref.replace("/", "_"))
+    if os.path.exists(marker):
+        return STAGE
+    assert (os.environ.get("KAGGLE_USERNAME") and os.environ.get("KAGGLE_KEY")) or os.path.exists(os.path.expanduser("~/.kaggle/kaggle.json")), \
+        ("Kaggle credentials not found: put KAGGLE_USERNAME and KAGGLE_KEY in the notebook's .env "
+         "(kaggle.com -> Settings -> API -> Create New Token gives both values)")
+    cli = os.path.join(os.path.dirname(sys.executable), "kaggle")
+    if not os.path.exists(cli):
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "kaggle==1.6.17"], check=True)
+    cmd = [cli, "datasets", "download", "-d", ref, "-p", STAGE, "--unzip"] if kind == "datasets" else [cli, "kernels", "output", ref, "-p", STAGE]
+    print(f"downloading Kaggle {kind[:-1]} {ref} -> {STAGE} (14 GB takes a while)", flush=True)
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL if kind == "kernels" else None)
+    for a in sorted(glob.glob(f"{STAGE}/**/*.zip", recursive=True) + glob.glob(f"{STAGE}/**/*.tar*", recursive=True)):
+        extract(a); os.remove(a)
+    open(marker, "w").close()
+    return STAGE
+
+
 def locate(src):
-    if src.startswith("hf://"):
+    if src.startswith("kaggle://"):
+        roots = [from_kaggle(src)]
+    elif src.startswith("hf://"):
         roots = [from_hub(src)]
     elif os.path.isfile(src):
         roots = [extract(src)]
     elif src not in ("", "auto"):
-        assert os.path.isdir(src), f"SOURCE {src!r} is neither a folder, an archive nor an hf:// address"
+        assert os.path.isdir(src), f"SOURCE {src!r} is neither a folder, an archive, an hf:// nor a kaggle:// address"
         roots = [src]
     else:
         roots = [os.getcwd(), os.path.expanduser("~"), "/data", "/datasets", "/mnt", "/workspace", "/storage",
