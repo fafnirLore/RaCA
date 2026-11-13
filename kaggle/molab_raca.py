@@ -75,12 +75,15 @@ def _(subprocess):
     def sh(cmd, env=None, check=True, on_line=None):
         """Run a bash command, print its output live, raise when it fails. on_line(line) is called for every output line."""
         p = subprocess.Popen(["bash", "-c", "set -o pipefail; " + cmd], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+        _tail = []
         for line in p.stdout:
             print(line, end="", flush=True)
+            _tail = (_tail + [line])[-40:]
             if on_line:
                 on_line(line)
         if p.wait() != 0 and check:
-            raise RuntimeError(f"command failed with exit status {p.returncode}: {cmd[:120]}")
+            # the last output lines go into the error itself, so the cause is visible even when the console panel is not
+            raise RuntimeError(f"command failed with exit status {p.returncode}: {cmd[:120]}\n--- last output lines ---\n" + "".join(_tail))
         return p.returncode
     return (sh,)
 
