@@ -111,7 +111,15 @@ def from_kaggle(url):
     cli = kaggle_cli()
     cmd = [cli, "datasets", "download", "-d", ref, "-p", STAGE, "--unzip"] if kind == "datasets" else [cli, "kernels", "output", ref, "-p", STAGE]
     print(f"downloading Kaggle {kind[:-1]} {ref} -> {STAGE} (14 GB takes a while)", flush=True)
-    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL if kind == "kernels" else None)
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL if kind == "kernels" else None)
+    except subprocess.CalledProcessError:
+        if kind != "datasets":
+            raise
+        # Kaggle sometimes refuses to serve a large dataset as one zip (404) although it is ready: fetch it file by file
+        print(f"whole-dataset download refused for {ref}; downloading it file by file instead", flush=True)
+        subprocess.run([os.path.join(os.path.dirname(cli), "python"), os.path.join(HERE, "kaggle_files.py"), ref, STAGE],
+                       check=True)
     for a in sorted(glob.glob(f"{STAGE}/**/*.zip", recursive=True) + glob.glob(f"{STAGE}/**/*.tar*", recursive=True)):
         extract(a); os.remove(a)
     open(marker, "w").close()
