@@ -31,6 +31,9 @@ class SemanticKittiDataset(Dataset):
         
         self.data_root = data_root
         self.label_root = os.path.join(preprocess_root, labels_tag)
+        # Compact data (kaggle/build_full_dataset.ipynb, used without expanding it): point clouds stored as x,y,z and
+        # labels as uint8. molab/prepare_data.py marks such a data root with a '.compact' file.
+        self.compact_pts = os.path.exists(os.path.join(data_root, ".compact"))
         self.depth_query = "msnet3d"
         self.depthmodel = depthmodel
         self.eval_range = eval_range
@@ -76,6 +79,14 @@ class SemanticKittiDataset(Dataset):
     def __getitem__(self, index):
         
         return self.prepare_data(index)
+
+    def _load_pts(self, path):
+        """x,y,z,1 float32 (MRA's format), or x,y,z float32 for compact data (4th column, always 1, added back)."""
+        pts = np.fromfile(path, dtype=np.float32)
+        if self.compact_pts:
+            pts = pts.reshape((-1, 3))
+            return np.concatenate([pts, np.ones((pts.shape[0], 1), np.float32)], 1)
+        return pts.reshape((-1, 4))
 
     def __len__(self):
         return len(self.scans)
@@ -360,8 +371,7 @@ class SemanticKittiDataset(Dataset):
         pts_filename = os.path.join(
                 self.data_root, "dataset", f"sequences_{self.depthmodel}_lidar/sequences", sequence, frame_id + ".bin"
             )
-        pts = np.fromfile(pts_filename, dtype=np.float32)
-        pts = pts.reshape((-1, 4))
+        pts = self._load_pts(pts_filename)
         pts = pts[:, :3]
 
         lidar2img_rts.append(lidar2img_rt)
@@ -404,8 +414,7 @@ class SemanticKittiDataset(Dataset):
             pts_filename = os.path.join(
                 self.data_root, "dataset", f"sequences_{self.depthmodel}_lidar/sequences", sequence, target_id + ".bin"
             )
-            pts = np.fromfile(pts_filename, dtype=np.float32)
-            pts = pts.reshape((-1, 4))
+            pts = self._load_pts(pts_filename)
             pts = np.matmul(np.matmul(inv(ref), target), pts.T).T
             pts = pts[:, :3]
 
@@ -510,7 +519,7 @@ class SemanticKittiDataset(Dataset):
         if self.split == "train" or self.split == "val":
             # load full-range groundtruth
             target_1_path = os.path.join(self.label_root, sequence, frame_id + "_1_1.npy")
-            target = np.load(target_1_path)
+            target = np.load(target_1_path).astype(np.float32)   # no-op for MRA's float32 files; compact data is uint8
             # short-range groundtruth
             if self.eval_range == 25.6:
                 target[128:, :, :] = 255

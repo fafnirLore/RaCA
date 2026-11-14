@@ -9,6 +9,8 @@ SOURCE may be
   kaggle://datasets/<user>/<slug>   a Kaggle dataset, downloaded and unzipped to /tmp/kitti_src
   kaggle://kernels/<user>/<slug>    the output of a Kaggle notebook, downloaded to /tmp/kitti_src
                                     (private: KAGGLE_API_TOKEN in the environment; older keys: KAGGLE_USERNAME + KAGGLE_KEY)
+  src1,src2,...                     several kaggle:// or hf:// sources merged into one tree (full-dataset groups
+                                    from kaggle/build_full_dataset.ipynb)
 
 Two layouts are recognised:
   compact  the Kaggle "scenes" subset (kitti_subset/selection.json next to dataset/): uint8 labels and x,y,z point
@@ -29,13 +31,13 @@ SKIP = {"proc", "sys", "dev", "run", "boot", "etc", "usr", "bin", "sbin", "lib",
         "node_modules", "site-packages", "__pycache__", ".git", ".cache", "kitti_full", "mra_env", "mmdetection3d"}
 
 
-def find_dataset_dirs(root, max_depth=6):
+def find_dataset_dirs(root, max_depth=6, skip=SKIP):
     """Folders named 'dataset' that contain 'sequences', at most max_depth levels below root."""
     hits, root = [], os.path.abspath(root)
     base = root.rstrip(os.sep).count(os.sep)
     for cur, dirs, _ in os.walk(root, followlinks=True):
         depth = cur.rstrip(os.sep).count(os.sep) - base
-        dirs[:] = [] if depth >= max_depth else [d for d in dirs if d not in SKIP and not d.startswith(".")]
+        dirs[:] = [] if depth >= max_depth else [d for d in dirs if d not in skip and not d.startswith(".")]
         if os.path.basename(cur) == "dataset" and os.path.isdir(os.path.join(cur, "sequences")):
             hits.append(cur); dirs[:] = []
     return hits
@@ -117,7 +119,12 @@ def from_kaggle(url):
 
 
 def locate(src):
-    if src.startswith("kaggle://"):
+    if "," in src:                                   # several kaggle:// / hf:// sources, merged in STAGE (full dataset groups)
+        for part in [p.strip() for p in src.split(",") if p.strip()]:
+            assert part.startswith(("kaggle://", "hf://")), f"comma-separated SOURCE parts must be kaggle:// or hf://, got {part!r}"
+            from_kaggle(part) if part.startswith("kaggle://") else from_hub(part)
+        roots = [STAGE]
+    elif src.startswith("kaggle://"):
         roots = [from_kaggle(src)]
     elif src.startswith("hf://"):
         roots = [from_hub(src)]
@@ -134,7 +141,10 @@ def locate(src):
         r = os.path.realpath(r)
         if os.path.isdir(r) and r not in seen:
             seen.add(r)
-            hits += [h for h in find_dataset_dirs(r) if os.path.realpath(h) != os.path.realpath(DST + "dataset")]
+            # 'kitti_full' is skipped only when searching the machine (it is DST's name); the full-dataset groups from
+            # kaggle/build_full_dataset.ipynb are packed as kitti_full/ and must be found inside an explicit SOURCE
+            skip = SKIP if src in ("", "auto") else SKIP - {"kitti_full"}
+            hits += [h for h in find_dataset_dirs(r, skip=skip) if os.path.realpath(h) != os.path.realpath(DST + "dataset")]
     hits = sorted(set(os.path.realpath(h) for h in hits), key=lambda h: (not os.path.isdir(h + "/labels"), len(h)))
     assert hits, ("no dataset found: expected a folder .../dataset/sequences/XX/{image_2,voxels,calib.txt,poses.txt} "
                   f"below one of {roots}. Pass the folder, archive or hf:// address as SOURCE.")
@@ -184,14 +194,15 @@ def check(root):
                 if len(problems) > 20:
                     break
         counts[split] = n
+    compact = os.path.exists(root + ".compact")      # used as it is: uint8 labels, x,y,z clouds (the loader handles both)
     lab = sorted(glob.glob(f"{root}dataset/labels/*/*_1_1.npy"))
     if lab:
         a = np.load(lab[0])
-        if a.dtype != np.float32 or a.size != 256 * 256 * 32:
+        if a.dtype not in ((np.float32, np.uint8) if compact else (np.float32,)) or a.size != 256 * 256 * 32:
             problems.append(f"{lab[0]}: dtype {a.dtype}, shape {a.shape}; expected float32 with 256x256x32 values")
     pc = sorted(glob.glob(f"{root}dataset/sequences_msnet3d_lidar/sequences/*/*.bin"))
-    if pc and os.path.getsize(pc[0]) % 16:
-        problems.append(f"{pc[0]}: size is not a multiple of 16 bytes (x,y,z,1 float32)")
+    if pc and os.path.getsize(pc[0]) % (12 if compact else 16):
+        problems.append(f"{pc[0]}: size is not a multiple of {12 if compact else 16} bytes")
     if not counts.get("train") or not counts.get("val"):
         problems.append(f"no frames with voxels/*.bin: train {counts.get('train')}, val {counts.get('val')}")
     return counts, problems
@@ -208,7 +219,17 @@ if __name__ == "__main__":
             s = json.load(open(root + "selection.json")).get("summary", {})
             if s:
                 print(f"selection.json: train frames {s.get('train', {}).get('frames')} | val frames {s.get('val', {}).get('frames')}")
-        if compact:
+        full = os.path.exists(root + "selection.json") and \
+            json.load(open(root + "selection.json")).get("settings", {}).get("mode") == "full"
+        if compact and full:
+            # full dataset (kaggle/build_full_dataset.ipynb): expanding it would roughly double ~60 GB on disk, so it is
+            # linked as it is and marked '.compact'; the data loader reads uint8 labels and x,y,z clouds directly.
+            os.makedirs(DST, exist_ok=True)
+            if not os.path.exists(DST + "dataset"):
+                os.symlink(root + "dataset", DST + "dataset")
+            open(DST + ".compact", "w").close()
+            print("full compact dataset: used without expanding (loader reads the compact format)")
+        elif compact:
             subprocess.run([sys.executable, os.path.join(HERE, "..", "kaggle", "expand_subset.py"), root, DST], check=True)
         else:
             os.makedirs(DST, exist_ok=True)
