@@ -18,7 +18,7 @@ Two layouts are recognised:
   full     MRA's own layout (float32 labels, x,y,z,1 point clouds): linked at DST as it is, nothing is copied.
 The last line printed is `DATA_ROOT=<DST>`; the checks fail loudly if a file MRA would read is missing.
 """
-import glob, json, os, subprocess, sys, tarfile, zipfile
+import glob, json, os, shlex, subprocess, sys, tarfile, zipfile
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -120,6 +120,17 @@ def from_kaggle(url):
         print(f"whole-dataset download refused for {ref}; downloading it file by file instead", flush=True)
         subprocess.run([os.path.join(os.path.dirname(cli), "python"), os.path.join(HERE, "kaggle_files.py"), ref, STAGE],
                        check=True)
+    # numbered parts of one tar (kaggle/repack_full_dataset.ipynb: kitti_full_<g>.part000, .part001, ...): join and unpack
+    groups = {}
+    for p in glob.glob(f"{STAGE}/**/*.part[0-9][0-9][0-9]", recursive=True):
+        groups.setdefault(p[:-len(".part000")], []).append(p)
+    for prefix, parts in sorted(groups.items()):
+        parts.sort()
+        print(f"joining {len(parts)} parts of {os.path.basename(prefix)} and unpacking -> {STAGE}", flush=True)
+        subprocess.run("set -o pipefail; cat " + " ".join(shlex.quote(p) for p in parts) + f" | tar xf - -C {shlex.quote(STAGE)}",
+                       shell=True, check=True, executable="/bin/bash")
+        for p in parts:
+            os.remove(p)
     for a in sorted(glob.glob(f"{STAGE}/**/*.zip", recursive=True) + glob.glob(f"{STAGE}/**/*.tar*", recursive=True)):
         extract(a); os.remove(a)
     open(marker, "w").close()

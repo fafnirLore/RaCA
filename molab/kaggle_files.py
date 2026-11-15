@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from kaggle.api.kaggle_api_extended import KaggleApi
 
 REF, DST = sys.argv[1], sys.argv[2]
-WORKERS = int(os.environ.get("KAGGLE_WORKERS", 16))
+WORKERS = int(os.environ.get("KAGGLE_WORKERS", 4))
 _local = threading.local()
 
 
@@ -30,7 +30,15 @@ def attr(obj, *names):
 def list_files():
     files, token = [], None
     while True:
-        r = api().dataset_list_files(REF, page_token=token, page_size=200)
+        for attempt in range(8):                     # 429 Too Many Requests: wait and try again
+            try:
+                r = api().dataset_list_files(REF, page_token=token, page_size=200)
+                break
+            except Exception as e:
+                if attempt == 7:
+                    raise
+                print(f"listing files: {e!r}; retrying in {30 * (attempt + 1)} s", flush=True)
+                time.sleep(30 * (attempt + 1))
         page = attr(r, "files", "dataset_files", "datasetFiles") or []
         files += [attr(f, "name", "ref") for f in page]
         token = attr(r, "next_page_token", "nextPageToken")
@@ -62,7 +70,7 @@ def fetch(name):
                 return -1
             if hasattr(_local, "api"):
                 del _local.api
-            time.sleep(3 * (attempt + 1))
+            time.sleep(20 * (attempt + 1))
 
 
 if __name__ == "__main__":
