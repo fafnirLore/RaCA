@@ -40,3 +40,4 @@ fi
 if [ "$STATUS" != "0" ]; then echo "TRAINING FAILED (exit $STATUS) - last lines of the log:"; tail -40 "$OUT/train_full.log"; exit 1; fi
 ls -la "$OUT"/*.pth
 [ -f "$OUT/early_stopping.json" ] && echo "early stopping record: $OUT/early_stopping.json"
+exit 0   # the test above returns 1 when there is no early-stopping file; that is not a failure
